@@ -12,6 +12,7 @@ import {
   StatusBar,
   TextInput,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -22,6 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import { AutoSizeText, ResizeTextMode } from 'react-native-auto-size-text';
 import deepCopy from '../utils/deepCopy';
+import { exportWorkoutLogsToCSV, getExportSummary, formatDateForCSV } from '../utils/csvExportUtils';
 
 interface EditExerciseMetadata {
     exerciseName: string;
@@ -75,6 +77,8 @@ export default function AllLogs() {
     logged_exercise_id: -1
   });
   const [editExerciseData, setEditExerciseData] = useState<ExerciseLog[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+
   const updateExerciseWeightLog = (item: ExerciseLog,
                                   val: string, 
                                   updatedKeyName: 'weight_logged' | 'reps_logged',
@@ -333,7 +337,76 @@ export default function AllLogs() {
     });
     setShowLogEditModal(false);
   };
-  
+
+  const handleExportCSV = async () => {
+    try {
+      setIsExporting(true);
+
+      // Get summary first
+      const summary = await getExportSummary(db);
+
+      if (summary.totalSets === 0) {
+        Alert.alert(
+          t('noData') || 'No Data',
+          t('noWorkoutLogsToExport') || 'You have no workout logs to export yet.'
+        );
+        setIsExporting(false);
+        return;
+      }
+
+      // Show confirmation with summary
+      const earliestDate = summary.dateRange
+        ? formatDateForCSV(summary.dateRange.earliest, dateFormat)
+        : 'N/A';
+      const latestDate = summary.dateRange
+        ? formatDateForCSV(summary.dateRange.latest, dateFormat)
+        : 'N/A';
+
+      Alert.alert(
+        t('exportWorkoutLogs') || 'Export Workout Logs',
+        t('exportSummary', {
+          workouts: summary.totalWorkouts,
+          sets: summary.totalSets,
+          earliest: earliestDate,
+          latest: latestDate
+        }) || `Ready to export ${summary.totalWorkouts} workouts (${summary.totalSets} sets)\nDate range: ${earliestDate} to ${latestDate}`,
+        [
+          {
+            text: t('alertCancel') || 'Cancel',
+            style: 'cancel',
+            onPress: () => setIsExporting(false)
+          },
+          {
+            text: t('export') || 'Export',
+            onPress: async () => {
+              try {
+                await exportWorkoutLogsToCSV(db, dateFormat);
+                Alert.alert(
+                  t('success') || 'Success',
+                  t('workoutLogsExported') || 'Your workout logs have been exported successfully!'
+                );
+              } catch (error) {
+                Alert.alert(
+                  t('errorTitle') || 'Error',
+                  t('exportError') || 'Failed to export workout logs. Please try again.'
+                );
+                console.error('Export error:', error);
+              } finally {
+                setIsExporting(false);
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error preparing export:', error);
+      Alert.alert(
+        t('errorTitle') || 'Error',
+        t('exportError') || 'Failed to prepare export. Please try again.'
+      );
+      setIsExporting(false);
+    }
+  };
 
   const filterDaysByDateRange = (start: Date, end: Date) => {
     const startTimestamp = start.getTime();
@@ -551,19 +624,32 @@ export default function AllLogs() {
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
 
-         {/* Back Button */}
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => navigation.goBack()}
-            >
-              <Ionicons name="arrow-back" size={24} color={theme.text} />
-            </TouchableOpacity>
+      {/* Header with Back Button and Export Button */}
+      <View style={[styles.header, { backgroundColor: theme.background }]}>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color={theme.text} />
+        </TouchableOpacity>
 
+        <Text style={[styles.headerTitle, { color: theme.text }]}>
+          {t('allTracks')}
+        </Text>
 
-
-      <Text style={[styles.headerTitle, { color: theme.text }]}>
-        {t('allTracks')}
-      </Text>
+        {/* Export Button */}
+        <TouchableOpacity
+          style={[styles.exportButton, { opacity: isExporting ? 0.5 : 1 }]}
+          onPress={handleExportCSV}
+          disabled={isExporting}
+        >
+          {isExporting ? (
+            <ActivityIndicator size="small" color={theme.text} />
+          ) : (
+            <Ionicons name="download-outline" size={24} color={theme.text} />
+          )}
+        </TouchableOpacity>
+      </View>
       <View style={styles.filterContainer}>
         <TouchableOpacity
           style={[styles.filterButton, { backgroundColor: theme.buttonBackground }]}
@@ -693,7 +779,20 @@ export default function AllLogs() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 20, paddingTop: 40 },
-  headerTitle: { fontSize: 30, fontWeight: '900', textAlign: 'center' },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 0,
+    paddingVertical: 12,
+    borderBottomWidth: 0,
+  },
+  headerTitle: {
+    fontSize: 30,
+    fontWeight: '900',
+    textAlign: 'center',
+    flex: 1,
+  },
   filterContainer: {
     flexDirection: 'column', // Stack buttons vertically
     alignItems: 'center',
@@ -739,11 +838,13 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
   },
   backButton: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    zIndex: 10,
     padding: 8,
+  },
+  exportButton: {
+    padding: 8,
+    minWidth: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   logHeader: {
     flexDirection: 'row',

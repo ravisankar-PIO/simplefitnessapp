@@ -29,14 +29,23 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useSettings } from '../context/SettingsContext';
 import { loadRestTimerPreferences, saveRestTimerPreferences } from '../utils/startedWorkoutPreferenceUtils';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
-import { 
-  useTimerPersistence, 
-  createTimerState, 
-  updateTimerState, 
+import {
+  useTimerPersistence,
+  createTimerState,
+  updateTimerState,
   timerCalculations,
-  TimerState 
+  TimerState
 } from '../utils/timerPersistenceUtils';
 import { AutoSizeText, ResizeTextMode } from 'react-native-auto-size-text';
+import DifficultySelector from '../components/DifficultySelector';
+import WeightSuggestionBadge from '../components/WeightSuggestionBadge';
+import {
+    DifficultyLevel,
+    analyzeDifficultyAndSuggestWeight,
+    saveSuggestedWeight,
+    getSuggestedWeight,
+    DEFAULT_WEIGHT_INCREMENT
+} from '../utils/difficultyUtils';
 
 type StartedWorkoutRouteProps = RouteProp<
   StartWorkoutStackParamList,
@@ -112,7 +121,18 @@ export default function StartedWorkoutInterface() {
   // Timer state using the new utility
   const [timerState, setTimerState] = useState<TimerState>(createTimerState());
   const [isCompletingSet, setIsCompletingSet] = useState(false);
-  
+
+  // Difficulty tracking states
+  const [currentDifficulty, setCurrentDifficulty] = useState<DifficultyLevel>(null);
+  const [showDifficultySelector, setShowDifficultySelector] = useState(false);
+  const [weightIncrement, setWeightIncrement] = useState(DEFAULT_WEIGHT_INCREMENT);
+  const [suggestedWeights, setSuggestedWeights] = useState<Map<number, number>>(new Map());
+  const [pendingSetData, setPendingSetData] = useState<{
+    weight: number;
+    reps: number;
+    setIndex: number;
+  } | null>(null);
+
   // Timer refs for intervals
   const workoutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const restTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -131,7 +151,163 @@ export default function StartedWorkoutInterface() {
       )
     );
   };
-  
+
+  // Fetch suggested weights for exercises
+  const fetchSuggestedWeights = async (workoutData?: { workout_name: string; day_name: string }, exercisesList?: Exercise[]) => {
+    const workoutToUse = workoutData || workout;
+    const exercisesToUse = exercisesList || exercises;
+
+    if (!workoutToUse) return;
+
+    try {
+      const suggestions = new Map<number, number>();
+
+      for (const exercise of exercisesToUse) {
+        const suggested = await getSuggestedWeight(
+          db,
+          workoutToUse.workout_name,
+          workoutToUse.day_name,
+          exercise.exercise_name
+        );
+
+        if (suggested !== null) {
+          suggestions.set(exercise.logged_exercise_id, suggested);
+        }
+      }
+
+      setSuggestedWeights(suggestions);
+    } catch (error) {
+      console.error('Error fetching suggested weights:', error);
+    }
+  };
+
+  // Handle difficulty selection
+  const handleDifficultySelected = async (difficulty: DifficultyLevel) => {
+    setShowDifficultySelector(false);
+
+    if (!difficulty || !pendingSetData) return;
+
+    setCurrentDifficulty(difficulty);
+
+    // Now actually complete the set with the selected difficulty
+    await completeSetWithDifficulty(difficulty, pendingSetData);
+
+    // Clear pending data
+    setPendingSetData(null);
+  };
+
+  // Complete set with difficulty tracking
+  const completeSetWithDifficulty = async (difficulty: DifficultyLevel, setData: { weight: number; reps: number; setIndex: number }) => {
+    const currentSet = allSets[setData.setIndex];
+
+    try {
+      // Insert into Weight_Log with difficulty
+      await db.runAsync(
+        `INSERT INTO Weight_Log (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          workout_log_id,
+          currentSet.exercise_id,
+          currentSet.exercise_name,
+          currentSet.set_number,
+          setData.weight,
+          setData.reps,
+          currentSet.muscle_group,
+          difficulty
+        ]
+      );
+
+      // Mark set as logged in UI
+      const updatedSets = [...allSets];
+      updatedSets[setData.setIndex] = { ...currentSet, set_logged: true, reps_done: setData.reps.toString(), weight: setData.weight.toString() };
+      setAllSets(updatedSets);
+      updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
+
+      // Check if this was the last set of the exercise
+      const exerciseSets = updatedSets.filter(s => s.exercise_id === currentSet.exercise_id);
+      const allExerciseSetsLogged = exerciseSets.every(s => s.set_logged);
+
+      if (allExerciseSetsLogged) {
+        // Analyze difficulty and suggest weight for next time
+        const suggestedWeight = await analyzeDifficultyAndSuggestWeight(
+          db,
+          workout_log_id,
+          currentSet.exercise_id,
+          weightIncrement
+        );
+
+        if (suggestedWeight !== null) {
+          await saveSuggestedWeight(db, currentSet.exercise_id, suggestedWeight);
+
+          // Show a toast or alert to user
+          Alert.alert(
+            t('greatProgress') || 'Great Progress!',
+            t('weightSuggestion', { weight: suggestedWeight, unit: weightFormat }) ||
+            `Next time, try ${suggestedWeight} ${weightFormat} for ${currentSet.exercise_name}!`
+          );
+        }
+      }
+
+      // Vibrate for feedback
+      if (enableVibration) {
+        Vibration.vibrate(100);
+      }
+
+      // Find next unlogged set
+      const findNextUnloggedSet = (startIndex: number) => {
+        for (let i = startIndex; i < updatedSets.length; i++) {
+          if (!updatedSets[i].set_logged) {
+            return i;
+          }
+        }
+        return -1;
+      };
+
+      let nextSetIndex = findNextUnloggedSet(setData.setIndex + 1);
+
+      if (nextSetIndex !== -1) {
+        const differentExercise = isDifferentExercise(setData.setIndex, nextSetIndex);
+
+        setTimerState(prev => updateTimerState(prev, {
+          workoutStage: 'rest',
+          isExerciseRest: differentExercise,
+          currentSetIndex: nextSetIndex
+        }));
+
+        const restSeconds = differentExercise
+          ? parseInt(exerciseRestTime)
+          : parseInt(restTime);
+
+        setIsCompletingSet(false);
+
+        if (restSeconds > 0) {
+          setTimerState(prev => updateTimerState(prev, {
+            isResting: true,
+            restRemaining: restSeconds,
+            restStartTime: Date.now()
+          }));
+
+          stopRestTimer();
+          startRestTimer(restSeconds);
+        } else {
+          setTimerState(prev => updateTimerState(prev, {
+            workoutStage: 'exercise',
+            currentSetIndex: nextSetIndex
+          }));
+        }
+      } else {
+        // No more sets - workout complete
+        setIsCompletingSet(false);
+        stopWorkoutTimer();
+        setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
+      }
+    } catch (error) {
+      console.error('Error completing set:', error);
+      Alert.alert(t('errorTitle') || 'Error', t('errorLoggingSet') || 'Failed to log set. Please try again.');
+      setIsCompletingSet(false);
+    }
+  };
+
   // Handle timer restoration from background
   const handleTimerRestore = (savedState: TimerState, elapsedSeconds: number) => {
     console.log('=== RESTORING TIMER STATE ===');
@@ -478,8 +654,12 @@ export default function StartedWorkoutInterface() {
         });
         
         setAllSets(setsData);
+
+        // Fetch suggested weights for exercises
+        const exercisesWithStatus = exercisesResult.map(e => ({ ...e, exercise_fully_logged: false }));
+        await fetchSuggestedWeights(workoutResult[0], exercisesWithStatus);
       }
-      
+
       setLoading(false);
     } catch (error) {
       console.error('Error fetching workout details:', error);
@@ -934,6 +1114,16 @@ export default function StartedWorkoutInterface() {
             {currentSet.exercise_name}
           </Text>
 
+          {/* Suggested Weight Badge */}
+          {suggestedWeights.has(currentSet.exercise_id) && (
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
+              <WeightSuggestionBadge
+                suggestedWeight={suggestedWeights.get(currentSet.exercise_id)!}
+                onIncrementChange={setWeightIncrement}
+              />
+            </View>
+          )}
+
           <View style={styles.badgeAndIconsContainer}>
             {muscleGroupInfo && muscleGroupInfo.value && (
               <View style={[styles.muscleGroupBadgeMain, { backgroundColor: theme.card, borderColor: theme.border, marginRight: 8 }]}>
@@ -1029,83 +1219,23 @@ export default function StartedWorkoutInterface() {
                     Alert.alert(t('missingInformation'), t('enterRepsAndWeight'));
                     return;
                 }
-                
-                setIsCompletingSet(true);
 
-                const updatedSets = [...allSets];
-                const currentSetIndex = timerState.currentSetIndex;
-                const currentSet = { ...updatedSets[currentSetIndex], set_logged: true };
-                updatedSets[currentSetIndex] = currentSet;
-                
-                setAllSets(updatedSets);
-                updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
-                
-                const findNextUnloggedSet = (startIndex: number) => {
-                    for (let i = startIndex; i < updatedSets.length; i++) {
-                    if (!updatedSets[i].set_logged) {
-                        return i;
-                    }
-                    }
-                    return -1;
-                };
+                const weight = parseFloat(pressCurrentSet.weight);
+                const reps = parseInt(pressCurrentSet.reps_done);
 
-                let nextSetIndex = findNextUnloggedSet(currentSetIndex + 1);
-
-                if (nextSetIndex !== -1) {
-                    const differentExercise = isDifferentExercise(currentSetIndex, nextSetIndex);
-                    
-                    setTimerState(prev => updateTimerState(prev, {
-                    workoutStage: 'rest',
-                    isExerciseRest: differentExercise,
-                    currentSetIndex: nextSetIndex 
-                    }));
-                    
-                    const restSeconds = differentExercise 
-                    ? parseInt(exerciseRestTime) 
-                    : parseInt(restTime);
-                    
-                    setIsCompletingSet(false);
-                    startRestTimer(restSeconds);
-                    
-                } else {
-                    // No more unlogged sets after current one
-                    const anyUnlogged = updatedSets.some(s => !s.set_logged);
-                    if (anyUnlogged) {
-                    Alert.alert(
-                        t('unsavedSetsTitle'),
-                        t('unsavedSetsMessage'),
-                        [
-                        {
-                            text: t('Yes'),
-                            style: 'destructive',
-                            onPress: () => {
-                            setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
-                            stopWorkoutTimer();
-                            },
-                        },
-                        {
-                            text: t('No'),
-                            style: 'cancel',
-                            onPress: () => {
-                            const firstUnloggedIndex = findNextUnloggedSet(0);
-                            if (firstUnloggedIndex !== -1) {
-                                setTimerState(prev => updateTimerState(prev, {
-                                workoutStage: 'exercise',
-                                currentSetIndex: firstUnloggedIndex
-                                }));
-                            }
-                            setIsCompletingSet(false);
-                            },
-                        },
-                        ],
-                        { onDismiss: () => setIsCompletingSet(false) }
-                    );
-                    } else {
-                    // All sets are logged
-                    setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
-                    stopWorkoutTimer();
-                    }
+                if (isNaN(weight) || isNaN(reps) || weight <= 0 || reps <= 0) {
+                    Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
+                    return;
                 }
+
+                // Store pending set data and show difficulty selector
+                setPendingSetData({
+                    weight,
+                    reps,
+                    setIndex: timerState.currentSetIndex
+                });
+                setIsCompletingSet(true);
+                setShowDifficultySelector(true);
                 }}
                 disabled={
                     isCompletingSet ||
@@ -1278,52 +1408,24 @@ export default function StartedWorkoutInterface() {
     const saveWorkout = async () => {
       try {
         console.log('Starting workout save process...');
-        
-        await db.runAsync('BEGIN TRANSACTION;');
-        
+
         console.log('Saving completion time to Workout_Log:', timerState.workoutDuration);
         await db.runAsync(
-          `UPDATE Workout_Log 
-           SET completion_time = ? 
+          `UPDATE Workout_Log
+           SET completion_time = ?
            WHERE workout_log_id = ?;`,
           [timerState.workoutDuration, workout_log_id]
         );
-        
-        console.log('Saving completed sets:', loggedSets.length);
-        for (let i = 0; i < loggedSets.length; i++) {
-          const set = loggedSets[i];
-          await db.runAsync(
-            `INSERT INTO Weight_Log (
-              workout_log_id, 
-              logged_exercise_id, 
-              exercise_name, 
-              set_number, 
-              weight_logged, 
-              reps_logged,
-              muscle_group
-            ) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-            [
-              workout_log_id,
-              set.exercise_id,
-              set.exercise_name,
-              set.set_number,
-              parseFloat(set.weight),
-              parseInt(set.reps_done),
-              set.muscle_group
-            ]
-          );
-        }
-        
-        await db.runAsync('COMMIT;');
+
         console.log('Workout save completed successfully!');
-        
+        console.log('Note: Sets were already saved with difficulty tracking during workout');
+
         Alert.alert(
           t('workoutSaved'),
           t('workoutSavedMessage'),
           [{ text: t('OK'), onPress: () => navigation.goBack() }]
         );
       } catch (error) {
-        await db.runAsync('ROLLBACK;');
         console.error('Error saving workout:', error);
         Alert.alert(
           'Error',
@@ -1703,6 +1805,17 @@ export default function StartedWorkoutInterface() {
       </ScrollView>
       {renderExerciseListModal()}
       {renderNotesModal()}
+
+      {/* Difficulty Selector Modal */}
+      <DifficultySelector
+        visible={showDifficultySelector}
+        onSelect={handleDifficultySelected}
+        onClose={() => {
+          setShowDifficultySelector(false);
+          setIsCompletingSet(false);
+          setPendingSetData(null);
+        }}
+      />
     </View>
   );
 }

@@ -66,3 +66,33 @@ export const addExerciseNotesColumn = async (db: SQLiteDatabase) => {
         console.error('Error adding exercise_notes column:', error);
     }
 };
+
+export const addDifficultyColumn = async (db: SQLiteDatabase) => {
+    const table = 'Weight_Log';
+    try {
+        const columns = await db.getAllAsync<any>(`PRAGMA table_info(${table});`);
+        const columnExists = columns.some((col: any) => col.name === 'difficulty');
+
+        if (!columnExists) {
+            await db.runAsync(`ALTER TABLE ${table} ADD COLUMN difficulty TEXT;`);
+            console.log(`'difficulty' column added to '${table}' table.`);
+        }
+    } catch (error) {
+        console.error('Error adding difficulty column:', error);
+    }
+};
+
+export const addSuggestedWeightColumn = async (db: SQLiteDatabase) => {
+    const table = 'Logged_Exercises';
+    try {
+        const columns = await db.getAllAsync<any>(`PRAGMA table_info(${table});`);
+        const columnExists = columns.some((col: any) => col.name === 'suggested_weight');
+
+        if (!columnExists) {
+            await db.runAsync(`ALTER TABLE ${table} ADD COLUMN suggested_weight REAL;`);
+            console.log(`'suggested_weight' column added to '${table}' table.`);
+        }
+    } catch (error) {
+        console.error('Error adding suggested_weight column:', error);
+    }
+};

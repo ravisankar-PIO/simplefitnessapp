@@ -481,7 +481,33 @@
     "editExerciseTipText": "Tip: You can edit exercise logs by clicking them.",
 
     "savingError": "Saving Error",
-    "weightsValidationError": "Weights have to be above 0."
+    "weightsValidationError": "Weights have to be above 0.",
+    "repsValidationError": "Reps have to be above 0.",
+
+    "_comment_difficulty": "Difficulty tracking translations",
+    "difficultyEasy": "Easy",
+    "difficultyMedium": "Medium",
+    "difficultyHard": "Hard",
+    "howWasThisSet": "How was this set?",
+    "suggested": "Suggested",
+    "configureIncrement": "Configure Weight Increment",
+    "increaseBy": "Increase by",
+    "apply": "Apply",
+    "invalidIncrement": "Please enter a valid weight increment",
+    "greatProgress": "Great Progress!",
+    "weightSuggestion": "Next time, try {{weight}} {{unit}} for this exercise!",
+    "invalidWeightReps": "Please enter valid weight and reps",
+    "errorLoggingSet": "Failed to log set. Please try again.",
+
+    "_comment_csv_export": "CSV export translations",
+    "exportWorkoutLogs": "Export Workout Logs",
+    "noWorkoutLogsToExport": "You have no workout logs to export yet.",
+    "exportSummary": "Ready to export {{workouts}} workouts ({{sets}} sets)\nDate range: {{earliest}} to {{latest}}",
+    "export": "Export",
+    "workoutLogsExported": "Your workout logs have been exported successfully!",
+    "exportError": "Failed to export workout logs. Please try again.",
+    "noData": "No Data",
+    "success": "Success"
 
     }
   

@@ -639,11 +639,8 @@ export default function AllLogs() {
 
         {/* Export Button */}
         <TouchableOpacity
-          style={[styles.exportButton, { opacity: isExporting ? 0.5 : 1, backgroundColor: 'rgba(255, 0, 0, 0.1)' }]}
-          onPress={() => {
-            console.log('Export button pressed!');
-            handleExportCSV();
-          }}
+          style={[styles.exportButton, { opacity: isExporting ? 0.5 : 1 }]}
+          onPress={handleExportCSV}
           disabled={isExporting}
         >
           {isExporting ? (

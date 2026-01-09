@@ -131,6 +131,7 @@ export default function StartedWorkoutInterface() {
     weight: number;
     reps: number;
     setIndex: number;
+    isFinishWorkout?: boolean;
   } | null>(null);
 
   // Timer refs for intervals
@@ -151,6 +152,15 @@ export default function StartedWorkoutInterface() {
       )
     );
   };
+
+  // State for previous workout history
+  const [previousWorkoutHistory, setPreviousWorkoutHistory] = useState<Map<string, Array<{
+    setNumber: number;
+    reps: number;
+    weight: number;
+    difficulty: string | null;
+    workoutDate: number;
+  }>>>(new Map());
 
   // Fetch suggested weights for exercises
   const fetchSuggestedWeights = async (workoutData?: { workout_name: string; day_name: string }, exercisesList?: Exercise[]) => {
@@ -181,6 +191,47 @@ export default function StartedWorkoutInterface() {
     }
   };
 
+  // Fetch previous workout history for an exercise
+  const fetchPreviousWorkoutHistory = async (exerciseName: string) => {
+    try {
+      const previousSets = await db.getAllAsync<{
+        set_number: number;
+        reps_logged: number;
+        weight_logged: number;
+        difficulty: string | null;
+        workout_date: number;
+      }>(
+        `SELECT wl.set_number, wl.reps_logged, wl.weight_logged, wl.difficulty, w.workout_date
+         FROM Weight_Log wl
+         JOIN Workout_Log w ON wl.workout_log_id = w.workout_log_id
+         WHERE wl.exercise_name = ?
+         AND wl.workout_log_id != ?
+         ORDER BY w.workout_date DESC, wl.set_number ASC
+         LIMIT 20`,
+        [exerciseName, workout_log_id]
+      );
+
+      if (previousSets.length > 0) {
+        // Group by workout (same workout_date)
+        const mostRecentDate = previousSets[0].workout_date;
+        const mostRecentSets = previousSets.filter(s => s.workout_date === mostRecentDate);
+
+        return mostRecentSets.map(set => ({
+          setNumber: set.set_number,
+          reps: set.reps_logged,
+          weight: set.weight_logged,
+          difficulty: set.difficulty || 'Medium',
+          workoutDate: set.workout_date,
+        }));
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error fetching previous workout history:', error);
+      return [];
+    }
+  };
+
   // Handle difficulty selection
   const handleDifficultySelected = async (difficulty: DifficultyLevel) => {
     setShowDifficultySelector(false);
@@ -189,15 +240,21 @@ export default function StartedWorkoutInterface() {
 
     setCurrentDifficulty(difficulty);
 
-    // Now actually complete the set with the selected difficulty
-    await completeSetWithDifficulty(difficulty, pendingSetData);
+    // Check if this is a finish workout scenario
+    if (pendingSetData.isFinishWorkout) {
+      // Complete the last set with difficulty, then finish workout
+      await completeSetWithDifficulty(difficulty, pendingSetData, true);
+    } else {
+      // Normal set completion
+      await completeSetWithDifficulty(difficulty, pendingSetData);
+    }
 
     // Clear pending data
     setPendingSetData(null);
   };
 
   // Complete set with difficulty tracking
-  const completeSetWithDifficulty = async (difficulty: DifficultyLevel, setData: { weight: number; reps: number; setIndex: number }) => {
+  const completeSetWithDifficulty = async (difficulty: DifficultyLevel, setData: { weight: number; reps: number; setIndex: number }, isFinishingWorkout: boolean = false) => {
     const currentSet = allSets[setData.setIndex];
 
     try {
@@ -238,19 +295,21 @@ export default function StartedWorkoutInterface() {
 
         if (suggestedWeight !== null) {
           await saveSuggestedWeight(db, currentSet.exercise_id, suggestedWeight);
-
-          // Show a toast or alert to user
-          Alert.alert(
-            t('greatProgress') || 'Great Progress!',
-            t('weightSuggestion', { weight: suggestedWeight, unit: weightFormat }) ||
-            `Next time, try ${suggestedWeight} ${weightFormat} for ${currentSet.exercise_name}!`
-          );
+          // Note: Alert removed as per Requirement #3
         }
       }
 
       // Vibrate for feedback
       if (enableVibration) {
         Vibration.vibrate(100);
+      }
+
+      // If this is the finish workout scenario, complete the workout now
+      if (isFinishingWorkout) {
+        setIsCompletingSet(false);
+        stopWorkoutTimer();
+        setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
+        return;
       }
 
       // Find next unlogged set
@@ -658,6 +717,16 @@ export default function StartedWorkoutInterface() {
         // Fetch suggested weights for exercises
         const exercisesWithStatus = exercisesResult.map(e => ({ ...e, exercise_fully_logged: false }));
         await fetchSuggestedWeights(workoutResult[0], exercisesWithStatus);
+
+        // Fetch previous workout history for each exercise
+        const historyMap = new Map();
+        for (const exercise of exercisesResult) {
+          const history = await fetchPreviousWorkoutHistory(exercise.exercise_name);
+          if (history.length > 0) {
+            historyMap.set(exercise.exercise_name, history);
+          }
+        }
+        setPreviousWorkoutHistory(historyMap);
       }
 
       setLoading(false);
@@ -1301,6 +1370,33 @@ export default function StartedWorkoutInterface() {
           </View>
         </View>
         <Text style={[styles.tipText, { color: theme.text }]}>{t('startedWorkoutTip')}</Text>
+
+        {/* Previous Workout History */}
+        {previousWorkoutHistory.has(currentSet.exercise_name) && (
+          <View style={[styles.historyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.historyTitle, { color: theme.text }]}>
+              📊 {t('previousWorkout') || 'Previous Workout'}
+            </Text>
+            <ScrollView
+              style={styles.historyScrollView}
+              nestedScrollEnabled={true}
+            >
+              {previousWorkoutHistory.get(currentSet.exercise_name)!.map((historySet, index) => {
+                const difficultyEmoji =
+                  historySet.difficulty === 'Easy' ? '😊' :
+                  historySet.difficulty === 'Hard' ? '😓' : '😐';
+
+                return (
+                  <View key={index} style={[styles.historySetRow, { borderBottomColor: theme.border }]}>
+                    <Text style={[styles.historySetText, { color: theme.text }]}>
+                      Set {historySet.setNumber}: {historySet.reps} reps × {historySet.weight} {weightFormat} {difficultyEmoji}
+                    </Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
       </View>
     );
   };
@@ -1744,15 +1840,29 @@ export default function StartedWorkoutInterface() {
     const currentSetIndex = timerState.currentSetIndex;
     const currentSet = allSets[currentSetIndex];
 
-    if (currentSet && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '' && parseFloat(currentSet.weight) > 0) {
-      const updatedSets = [...allSets];
-      updatedSets[currentSetIndex] = { ...currentSet, set_logged: true };
-      setAllSets(updatedSets);
-      updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
+    // Check if the current set has valid data and hasn't been logged
+    if (currentSet && !currentSet.set_logged && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '' && parseFloat(currentSet.weight) > 0) {
+      const weight = parseFloat(currentSet.weight);
+      const reps = parseInt(currentSet.reps_done);
+
+      if (isNaN(weight) || isNaN(reps) || weight <= 0 || reps <= 0) {
+        Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
+        return;
+      }
+
+      // Store pending set data and show difficulty selector
+      setPendingSetData({
+        weight,
+        reps,
+        setIndex: currentSetIndex,
+        isFinishWorkout: true,
+      });
+      setShowDifficultySelector(true);
+    } else {
+      // No valid current set to log, just finish
+      stopWorkoutTimer();
+      setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
     }
-    
-    stopWorkoutTimer();
-    setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
   };
   
   if (loading) {
@@ -2311,5 +2421,28 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
+  },
+  historyCard: {
+    marginTop: 20,
+    marginHorizontal: 20,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    maxHeight: 200,
+  },
+  historyTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  historyScrollView: {
+    maxHeight: 150,
+  },
+  historySetRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  historySetText: {
+    fontSize: 14,
   },
 });

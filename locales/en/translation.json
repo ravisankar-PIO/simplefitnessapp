@@ -507,7 +507,10 @@
     "workoutLogsExported": "Your workout logs have been exported successfully!",
     "exportError": "Failed to export workout logs. Please try again.",
     "noData": "No Data",
-    "success": "Success"
+    "success": "Success",
+
+    "_comment_history": "Workout history translations",
+    "previousWorkout": "Previous Workout"
 
     }
   

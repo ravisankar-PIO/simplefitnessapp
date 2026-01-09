@@ -32,6 +32,7 @@ export default function LogWeights() {
   const [exercises, setExercises] = useState<LoggedExercise[]>([]);
   const [weights, setWeights] = useState<{ [key: string]: string }>({});
   const [reps, setReps] = useState<{ [key: string]: string }>({});
+  const [difficulty, setDifficulty] = useState<{ [key: string]: 'Easy' | 'Medium' | 'Hard' }>({});
   const [exerciseSets, setExerciseSets] = useState<{ [key: string]: number[] }>({});
   const { weightFormat, dateFormat } = useSettings();
 
@@ -230,10 +231,13 @@ export default function LogWeights() {
             const weight = parseFloat(weights[weightKey]?.replace(',', '.') || '0');
             const repsCount = parseInt(reps[repsKey] || '0', 10);
 
+            const difficultyKey = `${exercise.logged_exercise_id}_${setNumber}`;
+            const difficultyValue = difficulty[difficultyKey] || 'Medium'; // Default to Medium if not selected
+
             await db.runAsync(
-              `INSERT INTO Weight_Log 
-               (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group)
-               VALUES (?, ?, ?, ?, ?, ?, ?);`,
+              `INSERT INTO Weight_Log
+               (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
               [
                 selectedWorkout.workout_log_id,
                 exercise.logged_exercise_id,
@@ -242,6 +246,7 @@ export default function LogWeights() {
                 weight,
                 repsCount,
                 exercise.muscle_group || null,
+                difficultyValue,
               ]
             );
           }
@@ -264,6 +269,10 @@ export default function LogWeights() {
     setReps(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleDifficultyChange = React.useCallback((key: string, value: 'Easy' | 'Medium' | 'Hard') => {
+    setDifficulty(prev => ({ ...prev, [key]: value }));
+  }, []);
+
   const renderExercise = (exercise: LoggedExercise) => {
     const muscleGroupInfo = muscleGroupData.find(mg => mg.value === exercise.muscle_group);
     return (
@@ -281,19 +290,23 @@ export default function LogWeights() {
         <View style={styles.labelsRow}>
           <Text style={[styles.label, { color: theme.text }]}>{t('repsPlaceholder')}</Text>
           <Text style={[styles.label, { color: theme.text }]}>{t('Weight')} ({weightFormat})</Text>
+          <Text style={[styles.label, { color: theme.text }]}>Difficulty</Text>
         </View>
         {exerciseSets[exercise.logged_exercise_id]?.map((setNumber) => {
           const weightKey = `${exercise.logged_exercise_id}_${setNumber}`;
           const repsKey = `${exercise.logged_exercise_id}_${setNumber}`;
-    
+          const difficultyKey = `${exercise.logged_exercise_id}_${setNumber}`;
+
           return (
             <SetInputRow
               key={`${exercise.logged_exercise_id}_${setNumber}`}
               setNumber={setNumber}
               reps={reps[repsKey]}
               weight={weights[weightKey]}
+              difficulty={difficulty[difficultyKey]}
               onRepsChange={(text: string) => handleRepsChange(repsKey, text)}
               onWeightChange={(text: string) => handleWeightChange(weightKey, text)}
+              onDifficultyChange={(value: 'Easy' | 'Medium' | 'Hard') => handleDifficultyChange(difficultyKey, value)}
               onDelete={() => deleteSet(exercise.logged_exercise_id.toString(), setNumber)}
             />
           );
@@ -372,15 +385,23 @@ type SetInputRowProps = {
   setNumber: number;
   reps: string;
   weight: string;
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
   onRepsChange: (text: string) => void;
   onWeightChange: (text: string) => void;
+  onDifficultyChange: (value: 'Easy' | 'Medium' | 'Hard') => void;
   onDelete: () => void;
 };
 
-const SetInputRow = React.memo(({ setNumber, reps, weight, onRepsChange, onWeightChange, onDelete }: SetInputRowProps) => {
+const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsChange, onWeightChange, onDifficultyChange, onDelete }: SetInputRowProps) => {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { weightFormat } = useSettings();
+
+  const difficultyOptions: Array<{ emoji: string; value: 'Easy' | 'Medium' | 'Hard' }> = [
+    { emoji: '😊', value: 'Easy' },
+    { emoji: '😐', value: 'Medium' },
+    { emoji: '😓', value: 'Hard' },
+  ];
 
   return (
     <TouchableOpacity
@@ -405,6 +426,21 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, onRepsChange, onWeigh
         value={weight}
         onChangeText={onWeightChange}
       />
+
+      <View style={styles.difficultyContainer}>
+        {difficultyOptions.map((option) => (
+          <TouchableOpacity
+            key={option.value}
+            style={[
+              styles.difficultyButton,
+              difficulty === option.value && { backgroundColor: theme.buttonBackground }
+            ]}
+            onPress={() => onDifficultyChange(option.value)}
+          >
+            <Text style={styles.difficultyEmoji}>{option.emoji}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </TouchableOpacity>
   );
 });
@@ -521,6 +557,23 @@ const styles = StyleSheet.create({
     marginHorizontal: 25,
     textAlign: 'center',
     fontSize: 16,
+  },
+  difficultyContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  difficultyButton: {
+    padding: 8,
+    borderRadius: 8,
+    minWidth: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyEmoji: {
+    fontSize: 20,
   },
   saveButton: {
     backgroundColor: '#000000',

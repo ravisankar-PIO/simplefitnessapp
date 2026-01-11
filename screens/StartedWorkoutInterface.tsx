@@ -1240,7 +1240,7 @@ export default function StartedWorkoutInterface() {
             }}
             keyboardType="number-pad"
             maxLength={4}
-            placeholder={"> 0"}
+            placeholder="0"
             placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
           />
             </View>
@@ -1265,8 +1265,8 @@ export default function StartedWorkoutInterface() {
                   };
                   setAllSets(updatedSets);
                 }}
-                keyboardType="decimal-pad"
-                placeholder="> 0.0"
+                keyboardType="numeric"
+                placeholder="0.0"
                 placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
               />
             </View>
@@ -1276,15 +1276,15 @@ export default function StartedWorkoutInterface() {
         <View style={styles.controlsContainer}>
             {!isLastStructuralSet &&
             <TouchableOpacity
-                style={[styles.completeButton, { 
-                backgroundColor: 
-                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === '' || parseFloat(allSets[timerState.currentSetIndex].weight) <= 0
-                    ? theme.inactivetint 
+                style={[styles.completeButton, {
+                backgroundColor:
+                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === ''
+                    ? theme.inactivetint
                     : theme.buttonBackground
                 }]}
                 onPress={() => {
                 const pressCurrentSet = allSets[timerState.currentSetIndex];
-                if (!pressCurrentSet || pressCurrentSet.reps_done === '' || parseInt(pressCurrentSet.reps_done) <= 0 || pressCurrentSet.weight === '' || parseFloat(pressCurrentSet.weight) <= 0) {
+                if (!pressCurrentSet || pressCurrentSet.reps_done === '' || parseInt(pressCurrentSet.reps_done) <= 0 || pressCurrentSet.weight === '') {
                     Alert.alert(t('missingInformation'), t('enterRepsAndWeight'));
                     return;
                 }
@@ -1292,7 +1292,7 @@ export default function StartedWorkoutInterface() {
                 const weight = parseFloat(pressCurrentSet.weight);
                 const reps = parseInt(pressCurrentSet.reps_done);
 
-                if (isNaN(weight) || isNaN(reps) || weight <= 0 || reps <= 0) {
+                if (isNaN(weight) || isNaN(reps) || reps <= 0) {
                     Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
                     return;
                 }
@@ -1308,7 +1308,7 @@ export default function StartedWorkoutInterface() {
                 }}
                 disabled={
                     isCompletingSet ||
-                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === '' || parseFloat(allSets[timerState.currentSetIndex].weight) <= 0
+                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === ''
                 }
             >
                 <Text style={[styles.buttonText, { color: theme.buttonText }]}>
@@ -1841,11 +1841,11 @@ export default function StartedWorkoutInterface() {
     const currentSet = allSets[currentSetIndex];
 
     // Check if the current set has valid data and hasn't been logged
-    if (currentSet && !currentSet.set_logged && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '' && parseFloat(currentSet.weight) > 0) {
+    if (currentSet && !currentSet.set_logged && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '') {
       const weight = parseFloat(currentSet.weight);
       const reps = parseInt(currentSet.reps_done);
 
-      if (isNaN(weight) || isNaN(reps) || weight <= 0 || reps <= 0) {
+      if (isNaN(weight) || isNaN(reps) || reps <= 0) {
         Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
         return;
       }

@@ -7,6 +7,7 @@ import {
   Alert,
   TextInput,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { useNavigation, useRoute, RouteProp} from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import { WorkoutLog, LoggedExercise } from '../utils/types';
@@ -211,10 +212,10 @@ export default function LogWeights() {
         const weight = parseFloat(weights[weightKey]?.replace(',', '.') || '0');
         const repsCount = parseInt(reps[repsKey] || '0', 10);
 
-        if (weight <= 0 || repsCount <= 0) {
+        if (repsCount <= 0) {
           Alert.alert(
             t('errorTitle'),
-            t('logWeightsError')
+            t('invalidWeightReps')
           );
           return;
         }
@@ -397,12 +398,6 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
   const { theme } = useTheme();
   const { weightFormat } = useSettings();
 
-  const difficultyOptions: Array<{ emoji: string; value: 'Easy' | 'Medium' | 'Hard' }> = [
-    { emoji: '😊', value: 'Easy' },
-    { emoji: '😐', value: 'Medium' },
-    { emoji: '😓', value: 'Hard' },
-  ];
-
   return (
     <TouchableOpacity
       onLongPress={onDelete}
@@ -411,7 +406,7 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
       <Text style={[styles.setText, { color: theme.text }]}>{t('Set')} {setNumber}:</Text>
       <TextInput
         style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={t('repsPlaceholder') + " (> 0)"}
+        placeholder={t('repsPlaceholder')}
         placeholderTextColor={theme.logborder}
         keyboardType="numeric"
         value={reps}
@@ -420,27 +415,23 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
 
       <TextInput
         style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={weightFormat + " (> 0)"}
+        placeholder={weightFormat}
         placeholderTextColor={theme.logborder}
-        keyboardType="decimal-pad"
+        keyboardType="numeric"
         value={weight}
         onChangeText={onWeightChange}
       />
 
-      <View style={styles.difficultyContainer}>
-        {difficultyOptions.map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={[
-              styles.difficultyButton,
-              difficulty === option.value && { backgroundColor: theme.buttonBackground }
-            ]}
-            onPress={() => onDifficultyChange(option.value)}
-          >
-            <Text style={styles.difficultyEmoji}>{option.emoji}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <Picker
+        selectedValue={difficulty || 'Medium'}
+        onValueChange={(itemValue) => onDifficultyChange(itemValue)}
+        style={[styles.picker, { color: theme.text }]}
+        dropdownIconColor={theme.text}
+      >
+        <Picker.Item label="😊 Easy" value="Easy" />
+        <Picker.Item label="😐 Medium" value="Medium" />
+        <Picker.Item label="😓 Hard" value="Hard" />
+      </Picker>
     </TouchableOpacity>
   );
 });
@@ -558,22 +549,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
   },
-  difficultyContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    flex: 1,
-  },
-  difficultyButton: {
-    padding: 8,
-    borderRadius: 8,
-    minWidth: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  difficultyEmoji: {
-    fontSize: 20,
+  picker: {
+    flex: 1.2,
+    height: 40,
   },
   saveButton: {
     backgroundColor: '#000000',

@@ -13,6 +13,7 @@ import {
   ScrollView,
   Keyboard,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -31,11 +32,12 @@ interface EditExerciseMetadata {
 
 interface ExerciseLog {
     weight_log_id: number;
-    weight_logged: string; 
+    weight_logged: string;
     reps_logged: string;
-    set_number: number; 
-    workout_date: number; 
-    day_name: string 
+    set_number: number;
+    workout_date: number;
+    day_name: string;
+    difficulty: string | null;
 }
 
 export default function WeightLogDetail() {
@@ -78,10 +80,14 @@ export default function WeightLogDetail() {
   });
   const [editExerciseData, setEditExerciseData] = useState<ExerciseLog[]>([]);
   const updateExerciseWeightLog = (item: ExerciseLog,
-                                  val: string, 
-                                  updatedKeyName: 'weight_logged' | 'reps_logged',
+                                  val: string,
+                                  updatedKeyName: 'weight_logged' | 'reps_logged' | 'difficulty',
                                   index: number) => {
-    item[updatedKeyName] = val;  
+    if (updatedKeyName === 'difficulty') {
+      item[updatedKeyName] = val as 'Easy' | 'Medium' | 'Hard';
+    } else {
+      item[updatedKeyName] = val;
+    }
 
     setEditExerciseData(prev => prev.map((value, i) => i === index ? item : value))
   }
@@ -171,10 +177,11 @@ export default function WeightLogDetail() {
         day_name: string;
         logged_exercise_id: number;
         muscle_group: string | null;
+        difficulty: string | null;
       }>(
-        `SELECT Weight_Log.exercise_name, Weight_Log.weight_log_id, Weight_Log.weight_logged, Weight_Log.reps_logged, 
-        Weight_Log.set_number, Workout_Log.workout_date, Workout_Log.day_name, 
-        Weight_Log.logged_exercise_id, Weight_Log.muscle_group
+        `SELECT Weight_Log.exercise_name, Weight_Log.weight_log_id, Weight_Log.weight_logged, Weight_Log.reps_logged,
+        Weight_Log.set_number, Workout_Log.workout_date, Workout_Log.day_name,
+        Weight_Log.logged_exercise_id, Weight_Log.muscle_group, Weight_Log.difficulty
         FROM Weight_Log
         INNER JOIN Workout_Log ON Weight_Log.workout_log_id = Workout_Log.workout_log_id
         WHERE Workout_Log.day_name = ? AND Workout_Log.workout_date = ? AND Workout_Log.workout_name = ?
@@ -366,8 +373,8 @@ export default function WeightLogDetail() {
         return;
       }
 
-      const loggedWeight = parseInt(item.weight_logged);
-      if (Number.isNaN(loggedWeight) || loggedWeight === 0) {
+      const loggedWeight = parseFloat(item.weight_logged);
+      if (Number.isNaN(loggedWeight)) {
         Alert.alert(t('savingError'), t('weightsValidationError'));
         return;
       }
@@ -377,8 +384,8 @@ export default function WeightLogDetail() {
       }
 
       await db.runAsync(
-        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ? WHERE weight_log_id = ?',
-        [loggedWeight, loggedReps, item.weight_log_id]
+        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ?, difficulty = ? WHERE weight_log_id = ?',
+        [loggedWeight, loggedReps, item.difficulty || 'Medium', item.weight_log_id]
       );
     }
 
@@ -518,14 +525,21 @@ export default function WeightLogDetail() {
                           </View>
                         )}
                         </View>
-                        {sets.map((set, index) => (
-                          <Text
-                            key={index}
-                            style={[styles.logDetail, { color: theme.text }]}
-                          >
-                            {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}
-                          </Text>
-                        ))}
+                        {sets.map((set, index) => {
+                          const difficultyEmoji =
+                            set.difficulty === 'Easy' ? ' 😊' :
+                            set.difficulty === 'Hard' ? ' 😓' :
+                            set.difficulty === 'Medium' ? ' 😐' : '';
+
+                          return (
+                            <Text
+                              key={index}
+                              style={[styles.logDetail, { color: theme.text }]}
+                            >
+                              {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}{difficultyEmoji}
+                            </Text>
+                          );
+                        })}
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -647,7 +661,7 @@ export default function WeightLogDetail() {
                         <Text style={[styles.inputLabel, { color: theme.text, marginTop: 15 }]}>{weightFormat}</Text>
                         <TextInput
                           style={[styles.input, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
-                          placeholder={t('Weight') + ' (> 0)'}
+                          placeholder={t('Weight')}
                           placeholderTextColor={theme.text}
                           keyboardType="numeric"
                           value={item['weight_logged'].toString()}
@@ -656,12 +670,23 @@ export default function WeightLogDetail() {
                         <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>{t('repsPlaceholder')}</Text>
                         <TextInput
                           style={[styles.input, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
-                          placeholder={t('repsPlaceholder') + ' (> 0)'}
+                          placeholder={t('repsPlaceholder')}
                           placeholderTextColor={theme.text}
                           keyboardType="numeric"
                           value={item['reps_logged'].toString()}
                           onChangeText={(val) => updateExerciseWeightLog(item, val, 'reps_logged', index)}
                         />
+                        <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>Difficulty</Text>
+                        <Picker
+                          selectedValue={item.difficulty || 'Medium'}
+                          onValueChange={(itemValue) => updateExerciseWeightLog(item, itemValue, 'difficulty', index)}
+                          style={[styles.picker, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
+                          dropdownIconColor={theme.text}
+                        >
+                          <Picker.Item label="😊 Easy" value="Easy" />
+                          <Picker.Item label="😐 Medium" value="Medium" />
+                          <Picker.Item label="😓 Hard" value="Hard" />
+                        </Picker>
                       </View>
                     )
                   }}>
@@ -860,6 +885,11 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0, 0, 0, 0.2)',
     borderRadius: 8,
     padding: 10,
+    marginBottom: 10,
+  },
+  picker: {
+    width: '100%',
+    height: 50,
     marginBottom: 10,
   },
   modalTitle: {

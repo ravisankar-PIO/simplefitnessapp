@@ -403,7 +403,7 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
       onLongPress={onDelete}
       style={[styles.setContainer, { backgroundColor: 'transparent' }]}
     >
-      <Text style={[styles.setText, { color: theme.text }]}>{t('Set')} {setNumber}:</Text>
+      <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
       <TextInput
         style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
         placeholder={t('repsPlaceholder')}
@@ -538,20 +538,21 @@ const styles = StyleSheet.create({
   setText: {
     fontSize: 18,
     textAlign: 'center',
-    flex: 1,
+    width: 40,
     fontWeight: '600',
   },
   input: {
     flex: 1,
     borderRadius: 5,
     padding: 8,
-    marginHorizontal: 25,
+    marginHorizontal: 10,
     textAlign: 'center',
     fontSize: 16,
   },
   picker: {
-    flex: 1.2,
+    flex: 1.5,
     height: 40,
+    marginHorizontal: 5,
   },
   saveButton: {
     backgroundColor: '#000000',

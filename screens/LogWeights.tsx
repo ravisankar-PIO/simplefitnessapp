@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
-  Modal,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp} from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -17,6 +16,8 @@ import { useTheme } from '../context/ThemeContext';
 import { KeyboardAwareFlatList, KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useTranslation } from 'react-i18next';
 import { WeightLogStackParamList } from '../App';
+import DifficultySelector from '../components/DifficultySelector';
+import { DifficultyLevel } from '../utils/difficultyUtils';
 
 type LogWeightsRouteProp = RouteProp<WeightLogStackParamList, 'LogWeights'>;
 
@@ -35,6 +36,7 @@ export default function LogWeights() {
   const [reps, setReps] = useState<{ [key: string]: string }>({});
   const [difficulty, setDifficulty] = useState<{ [key: string]: 'Easy' | 'Medium' | 'Hard' }>({});
   const [exerciseSets, setExerciseSets] = useState<{ [key: string]: number[] }>({});
+  const [editingDifficultyKey, setEditingDifficultyKey] = useState<string | null>(null);
   const { weightFormat, dateFormat } = useSettings();
 
   const muscleGroupData = [
@@ -274,6 +276,17 @@ export default function LogWeights() {
     setDifficulty(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleDifficultyPress = React.useCallback((key: string) => {
+    setEditingDifficultyKey(key);
+  }, []);
+
+  const handleDifficultySelect = React.useCallback((selectedDifficulty: DifficultyLevel) => {
+    if (editingDifficultyKey && selectedDifficulty) {
+      setDifficulty(prev => ({ ...prev, [editingDifficultyKey]: selectedDifficulty }));
+    }
+    setEditingDifficultyKey(null);
+  }, [editingDifficultyKey]);
+
   const renderExercise = (exercise: LoggedExercise) => {
     const muscleGroupInfo = muscleGroupData.find(mg => mg.value === exercise.muscle_group);
     return (
@@ -307,7 +320,7 @@ export default function LogWeights() {
               difficulty={difficulty[difficultyKey]}
               onRepsChange={(text: string) => handleRepsChange(repsKey, text)}
               onWeightChange={(text: string) => handleWeightChange(weightKey, text)}
-              onDifficultyChange={(value: 'Easy' | 'Medium' | 'Hard') => handleDifficultyChange(difficultyKey, value)}
+              onDifficultyPress={() => handleDifficultyPress(difficultyKey)}
               onDelete={() => deleteSet(exercise.logged_exercise_id.toString(), setNumber)}
             />
           );
@@ -379,6 +392,11 @@ export default function LogWeights() {
   )}
     </KeyboardAwareScrollView>
 
+    <DifficultySelector
+      visible={editingDifficultyKey !== null}
+      onSelect={handleDifficultySelect}
+      onClose={() => setEditingDifficultyKey(null)}
+    />
   );
 }
 
@@ -389,15 +407,14 @@ type SetInputRowProps = {
   difficulty?: 'Easy' | 'Medium' | 'Hard';
   onRepsChange: (text: string) => void;
   onWeightChange: (text: string) => void;
-  onDifficultyChange: (value: 'Easy' | 'Medium' | 'Hard') => void;
+  onDifficultyPress: () => void;
   onDelete: () => void;
 };
 
-const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsChange, onWeightChange, onDifficultyChange, onDelete }: SetInputRowProps) => {
+const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsChange, onWeightChange, onDifficultyPress, onDelete }: SetInputRowProps) => {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { weightFormat } = useSettings();
-  const [showDifficultyModal, setShowDifficultyModal] = useState(false);
 
   const difficultyOptions = [
     { value: 'Easy', label: 'Easy', emoji: '😊' },
@@ -408,77 +425,36 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
   const currentDifficulty = difficultyOptions.find(opt => opt.value === difficulty) || difficultyOptions[1];
 
   return (
-    <>
+    <TouchableOpacity
+      onLongPress={onDelete}
+      style={[styles.setContainer, { backgroundColor: 'transparent' }]}
+    >
+      <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
+      <TextInput
+        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+        placeholder={t('repsPlaceholder')}
+        placeholderTextColor={theme.logborder}
+        keyboardType="numeric"
+        value={reps}
+        onChangeText={onRepsChange}
+      />
+
+      <TextInput
+        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+        placeholder={weightFormat}
+        placeholderTextColor={theme.logborder}
+        keyboardType="numeric"
+        value={weight}
+        onChangeText={onWeightChange}
+      />
+
       <TouchableOpacity
-        onLongPress={onDelete}
-        style={[styles.setContainer, { backgroundColor: 'transparent' }]}
+        style={[styles.difficultyButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+        onPress={onDifficultyPress}
       >
-        <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
-        <TextInput
-          style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-          placeholder={t('repsPlaceholder')}
-          placeholderTextColor={theme.logborder}
-          keyboardType="numeric"
-          value={reps}
-          onChangeText={onRepsChange}
-        />
-
-        <TextInput
-          style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-          placeholder={weightFormat}
-          placeholderTextColor={theme.logborder}
-          keyboardType="numeric"
-          value={weight}
-          onChangeText={onWeightChange}
-        />
-
-        <TouchableOpacity
-          style={[styles.difficultyButton, { backgroundColor: theme.card, borderColor: theme.border }]}
-          onPress={() => setShowDifficultyModal(true)}
-        >
-          <Text style={styles.difficultyEmoji}>{currentDifficulty.emoji}</Text>
-        </TouchableOpacity>
+        <Text style={styles.difficultyEmoji}>{currentDifficulty.emoji}</Text>
       </TouchableOpacity>
-
-      <Modal
-        visible={showDifficultyModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowDifficultyModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowDifficultyModal(false)}
-        >
-          <View style={[styles.difficultyModalContent, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>How was this set?</Text>
-            {difficultyOptions.map((option) => (
-              <TouchableOpacity
-                key={option.value}
-                style={[
-                  styles.difficultyOptionButton,
-                  { backgroundColor: theme.background, borderColor: theme.border },
-                  difficulty === option.value && { backgroundColor: theme.buttonBackground }
-                ]}
-                onPress={() => {
-                  onDifficultyChange(option.value);
-                  setShowDifficultyModal(false);
-                }}
-              >
-                <Text style={styles.difficultyOptionEmoji}>{option.emoji}</Text>
-                <Text style={[
-                  styles.difficultyOptionText,
-                  { color: difficulty === option.value ? theme.buttonText : theme.text }
-                ]}>
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </>
+    </TouchableOpacity>
   );
 });
 
@@ -606,42 +582,6 @@ const styles = StyleSheet.create({
   },
   difficultyEmoji: {
     fontSize: 24,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  difficultyModalContent: {
-    width: '80%',
-    maxWidth: 400,
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  difficultyOptionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 2,
-    marginBottom: 12,
-  },
-  difficultyOptionEmoji: {
-    fontSize: 32,
-    marginRight: 15,
-  },
-  difficultyOptionText: {
-    fontSize: 20,
-    fontWeight: '600',
   },
   saveButton: {
     backgroundColor: '#000000',

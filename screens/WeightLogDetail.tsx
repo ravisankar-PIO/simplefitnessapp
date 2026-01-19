@@ -13,7 +13,6 @@ import {
   ScrollView,
   Keyboard,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -79,6 +78,7 @@ export default function WeightLogDetail() {
     logged_exercise_id: -1
   });
   const [editExerciseData, setEditExerciseData] = useState<ExerciseLog[]>([]);
+  const [difficultyModalIndex, setDifficultyModalIndex] = useState<number | null>(null);
   const updateExerciseWeightLog = (item: ExerciseLog,
                                   val: string,
                                   updatedKeyName: 'weight_logged' | 'reps_logged' | 'difficulty',
@@ -677,16 +677,16 @@ export default function WeightLogDetail() {
                           onChangeText={(val) => updateExerciseWeightLog(item, val, 'reps_logged', index)}
                         />
                         <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>Difficulty</Text>
-                        <Picker
-                          selectedValue={item.difficulty || 'Medium'}
-                          onValueChange={(itemValue) => updateExerciseWeightLog(item, itemValue, 'difficulty', index)}
-                          style={[styles.picker, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
-                          dropdownIconColor={theme.text}
+                        <TouchableOpacity
+                          style={[styles.difficultyButton, { backgroundColor: theme.background, borderColor: theme.border }]}
+                          onPress={() => setDifficultyModalIndex(index)}
                         >
-                          <Picker.Item label="😊 Easy" value="Easy" />
-                          <Picker.Item label="😐 Medium" value="Medium" />
-                          <Picker.Item label="😓 Hard" value="Hard" />
-                        </Picker>
+                          <Text style={styles.difficultyButtonText}>
+                            {item.difficulty === 'Easy' ? '😊 Easy' :
+                             item.difficulty === 'Hard' ? '😓 Hard' :
+                             '😐 Medium'}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
                     )
                   }}>
@@ -703,6 +703,55 @@ export default function WeightLogDetail() {
               </View>
               </View>
           </TouchableWithoutFeedback>
+      </Modal>
+
+      {/* Difficulty Selection Modal */}
+      <Modal
+        visible={difficultyModalIndex !== null}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setDifficultyModalIndex(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setDifficultyModalIndex(null)}
+        >
+          <View style={[styles.difficultyModalContent, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>How was this set?</Text>
+            {[
+              { value: 'Easy', label: 'Easy', emoji: '😊' },
+              { value: 'Medium', label: 'Medium', emoji: '😐' },
+              { value: 'Hard', label: 'Hard', emoji: '😓' },
+            ].map((option) => {
+              const currentItem = difficultyModalIndex !== null ? editExerciseData[difficultyModalIndex] : null;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.difficultyOptionButton,
+                    { backgroundColor: theme.background, borderColor: theme.border },
+                    currentItem?.difficulty === option.value && { backgroundColor: theme.buttonBackground }
+                  ]}
+                  onPress={() => {
+                    if (difficultyModalIndex !== null && currentItem) {
+                      updateExerciseWeightLog(currentItem, option.value, 'difficulty', difficultyModalIndex);
+                    }
+                    setDifficultyModalIndex(null);
+                  }}
+                >
+                  <Text style={styles.difficultyOptionEmoji}>{option.emoji}</Text>
+                  <Text style={[
+                    styles.difficultyOptionText,
+                    { color: currentItem?.difficulty === option.value ? theme.buttonText : theme.text }
+                  ]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -887,10 +936,48 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 10,
   },
-  picker: {
+  difficultyButton: {
     width: '100%',
     height: 50,
+    borderWidth: 1,
+    borderRadius: 8,
     marginBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  difficultyModalContent: {
+    width: '80%',
+    maxWidth: 400,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+  },
+  difficultyOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 2,
+    marginBottom: 12,
+  },
+  difficultyOptionEmoji: {
+    fontSize: 32,
+    marginRight: 15,
+  },
+  difficultyOptionText: {
+    fontSize: 20,
+    fontWeight: '600',
   },
   modalTitle: {
     fontSize: 20,

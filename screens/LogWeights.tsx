@@ -6,8 +6,8 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
+  Modal,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import { useNavigation, useRoute, RouteProp} from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
 import { WorkoutLog, LoggedExercise } from '../utils/types';
@@ -397,42 +397,88 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { weightFormat } = useSettings();
+  const [showDifficultyModal, setShowDifficultyModal] = useState(false);
+
+  const difficultyOptions = [
+    { value: 'Easy', label: 'Easy', emoji: '😊' },
+    { value: 'Medium', label: 'Medium', emoji: '😐' },
+    { value: 'Hard', label: 'Hard', emoji: '😓' },
+  ];
+
+  const currentDifficulty = difficultyOptions.find(opt => opt.value === difficulty) || difficultyOptions[1];
 
   return (
-    <TouchableOpacity
-      onLongPress={onDelete}
-      style={[styles.setContainer, { backgroundColor: 'transparent' }]}
-    >
-      <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
-      <TextInput
-        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={t('repsPlaceholder')}
-        placeholderTextColor={theme.logborder}
-        keyboardType="numeric"
-        value={reps}
-        onChangeText={onRepsChange}
-      />
-
-      <TextInput
-        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={weightFormat}
-        placeholderTextColor={theme.logborder}
-        keyboardType="numeric"
-        value={weight}
-        onChangeText={onWeightChange}
-      />
-
-      <Picker
-        selectedValue={difficulty || 'Medium'}
-        onValueChange={(itemValue) => onDifficultyChange(itemValue)}
-        style={[styles.picker, { color: theme.text }]}
-        dropdownIconColor={theme.text}
+    <>
+      <TouchableOpacity
+        onLongPress={onDelete}
+        style={[styles.setContainer, { backgroundColor: 'transparent' }]}
       >
-        <Picker.Item label="😊 Easy" value="Easy" />
-        <Picker.Item label="😐 Medium" value="Medium" />
-        <Picker.Item label="😓 Hard" value="Hard" />
-      </Picker>
-    </TouchableOpacity>
+        <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
+        <TextInput
+          style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+          placeholder={t('repsPlaceholder')}
+          placeholderTextColor={theme.logborder}
+          keyboardType="numeric"
+          value={reps}
+          onChangeText={onRepsChange}
+        />
+
+        <TextInput
+          style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+          placeholder={weightFormat}
+          placeholderTextColor={theme.logborder}
+          keyboardType="numeric"
+          value={weight}
+          onChangeText={onWeightChange}
+        />
+
+        <TouchableOpacity
+          style={[styles.difficultyButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+          onPress={() => setShowDifficultyModal(true)}
+        >
+          <Text style={styles.difficultyEmoji}>{currentDifficulty.emoji}</Text>
+        </TouchableOpacity>
+      </TouchableOpacity>
+
+      <Modal
+        visible={showDifficultyModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDifficultyModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowDifficultyModal(false)}
+        >
+          <View style={[styles.difficultyModalContent, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>How was this set?</Text>
+            {difficultyOptions.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                style={[
+                  styles.difficultyOptionButton,
+                  { backgroundColor: theme.background, borderColor: theme.border },
+                  difficulty === option.value && { backgroundColor: theme.buttonBackground }
+                ]}
+                onPress={() => {
+                  onDifficultyChange(option.value);
+                  setShowDifficultyModal(false);
+                }}
+              >
+                <Text style={styles.difficultyOptionEmoji}>{option.emoji}</Text>
+                <Text style={[
+                  styles.difficultyOptionText,
+                  { color: difficulty === option.value ? theme.buttonText : theme.text }
+                ]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 });
 
@@ -549,10 +595,53 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 16,
   },
-  picker: {
+  difficultyButton: {
     flex: 1.5,
     height: 40,
     marginHorizontal: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyEmoji: {
+    fontSize: 24,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  difficultyModalContent: {
+    width: '80%',
+    maxWidth: 400,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  difficultyOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    borderRadius: 12,
+    borderWidth: 2,
+    marginBottom: 12,
+  },
+  difficultyOptionEmoji: {
+    fontSize: 32,
+    marginRight: 15,
+  },
+  difficultyOptionText: {
+    fontSize: 20,
+    fontWeight: '600',
   },
   saveButton: {
     backgroundColor: '#000000',

@@ -336,8 +336,8 @@ export default function LogWeights() {
   
 
   return (
-
-<KeyboardAwareScrollView
+    <>
+    <KeyboardAwareScrollView
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={{ flexGrow: 1, padding: 20 }}
       enableOnAndroid={true}
@@ -397,6 +397,7 @@ export default function LogWeights() {
       onSelect={handleDifficultySelect}
       onClose={() => setEditingDifficultyKey(null)}
     />
+    </>
   );
 }
 

@@ -16,6 +16,7 @@
     "Tomorrow":"Tomorrow",
     "Yesterday":"Yesterday",
     "set": "Set",
+    "optional": "optional",
 
     "_comment_calendar": "These are calendar-related strings.",
     "locale": "en",
@@ -199,6 +200,7 @@
     "failedToLogWeights": "Failed to log weights.",
     "Set":"Set",
     "Weight":"Weight",
+    "Comments":"Comments",
     "noWorkoutScheduled": "You need to schedule a workout to track it!",
     "trackWeights":"Track Weights",
 

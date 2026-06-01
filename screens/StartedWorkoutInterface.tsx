@@ -76,6 +76,7 @@ interface ExerciseSet {
   web_link: string | null;
   muscle_group: string | null;
   exercise_notes: string | null;
+  comments: string;
 }
 
 export default function StartedWorkoutInterface() {
@@ -258,10 +259,10 @@ export default function StartedWorkoutInterface() {
     const currentSet = allSets[setData.setIndex];
 
     try {
-      // Insert into Weight_Log with difficulty
+      // Insert into Weight_Log with difficulty and comments
       await db.runAsync(
-        `INSERT INTO Weight_Log (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+        `INSERT INTO Weight_Log (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty, comments)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           workout_log_id,
           currentSet.exercise_id,
@@ -270,7 +271,8 @@ export default function StartedWorkoutInterface() {
           setData.weight,
           setData.reps,
           currentSet.muscle_group,
-          difficulty
+          difficulty,
+          currentSet.comments || ''
         ]
       );
 
@@ -707,7 +709,8 @@ export default function StartedWorkoutInterface() {
               set_logged: false,
               web_link: exercise.web_link || null,
               muscle_group: exercise.muscle_group || null,
-              exercise_notes: exercise.exercise_notes || null
+              exercise_notes: exercise.exercise_notes || null,
+              comments: ''
             });
           }
         });
@@ -1222,9 +1225,32 @@ export default function StartedWorkoutInterface() {
           
           <View style={styles.inputContainer}>
             <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, { color: theme.text }]}> {t('Weight')} ({weightFormat})</Text>
+              <TextInput
+                style={[styles.input, {
+                  backgroundColor: theme.card,
+                  color: theme.text,
+                  borderColor: theme.border
+                }]}
+                value={currentSet.weight}
+                onChangeText={(text) => {
+                  const updatedSets = [...allSets];
+                  updatedSets[timerState.currentSetIndex] = {
+                    ...updatedSets[timerState.currentSetIndex],
+                    weight: text
+                  };
+                  setAllSets(updatedSets);
+                }}
+                keyboardType="numeric"
+                placeholder="0.0"
+                placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: theme.text }]}>{t('repsDone')}</Text>
               <TextInput
-                  style={[styles.input, { 
+                  style={[styles.input, {
                   backgroundColor: theme.card,
               color: theme.text,
               borderColor: theme.border
@@ -1244,32 +1270,29 @@ export default function StartedWorkoutInterface() {
             placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
           />
             </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: theme.text }]}> {t('Weight')} ({weightFormat})</Text>
-              <TextInput
-                style={[styles.input, { 
-                  backgroundColor: theme.card,
-                  color: theme.text,
-                  borderColor: theme.border
-                }]}
-                value={currentSet.weight}
-                onChangeText={(text) => {
+          </View>
 
-
-
-                  const updatedSets = [...allSets];
-                  updatedSets[timerState.currentSetIndex] = {
-                    ...updatedSets[timerState.currentSetIndex],
-                    weight: text
-                  };
-                  setAllSets(updatedSets);
-                }}
-                keyboardType="numeric"
-                placeholder="0.0"
-                placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
-              />
-            </View>
+          <View style={styles.commentsContainer}>
+            <Text style={[styles.inputLabel, { color: theme.text }]}>{t('Comments')} ({t('optional')})</Text>
+            <TextInput
+              style={[styles.commentsInput, {
+                backgroundColor: theme.card,
+                color: theme.text,
+                borderColor: theme.border
+              }]}
+              value={currentSet.comments}
+              onChangeText={(text) => {
+                const updatedSets = [...allSets];
+                updatedSets[timerState.currentSetIndex] = {
+                  ...updatedSets[timerState.currentSetIndex],
+                  comments: text
+                };
+                setAllSets(updatedSets);
+              }}
+              maxLength={100}
+              multiline
+              numberOfLines={2}
+            />
           </View>
         </View>
         
@@ -2142,6 +2165,19 @@ const styles = StyleSheet.create({
   },
   inputGroup: {
     width: '48%',
+  },
+  commentsContainer: {
+    marginTop: 15,
+    width: '100%',
+  },
+  commentsInput: {
+    height: 60,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    fontSize: 16,
+    textAlignVertical: 'top',
   },
   inputLabel: {
     fontSize: 14,

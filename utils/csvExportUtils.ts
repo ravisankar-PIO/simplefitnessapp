@@ -11,6 +11,7 @@ interface WorkoutLogEntry {
     weight_logged: number;
     reps_logged: number;
     difficulty: string | null;
+    comments: string | null;
 }
 
 /**
@@ -56,7 +57,7 @@ const escapeCsvField = (field: string | number | null): string => {
  */
 const generateCSVContent = (logs: WorkoutLogEntry[], dateFormat: string): string => {
     // CSV Header
-    const header = 'Date,Workout,Day,Exercise,Set,Weight,Reps,Difficulty\n';
+    const header = 'Date,Workout,Day,Exercise,Set,Weight,Reps,Difficulty,Comments\n';
 
     // CSV Rows
     const rows = logs.map(log => {
@@ -71,7 +72,8 @@ const generateCSVContent = (logs: WorkoutLogEntry[], dateFormat: string): string
             escapeCsvField(log.set_number),
             escapeCsvField(log.weight_logged),
             escapeCsvField(log.reps_logged),
-            escapeCsvField(difficulty)
+            escapeCsvField(difficulty),
+            escapeCsvField(log.comments || '')
         ].join(',');
     }).join('\n');
 
@@ -99,7 +101,8 @@ export const exportWorkoutLogsToCSV = async (
                 w.set_number,
                 w.weight_logged,
                 w.reps_logged,
-                w.difficulty
+                w.difficulty,
+                w.comments
             FROM Weight_Log w
             JOIN Workout_Log wl ON w.workout_log_id = wl.workout_log_id
             ORDER BY wl.workout_date DESC, w.logged_exercise_id ASC, w.set_number ASC`

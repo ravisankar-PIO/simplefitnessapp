@@ -96,3 +96,18 @@ export const addSuggestedWeightColumn = async (db: SQLiteDatabase) => {
         console.error('Error adding suggested_weight column:', error);
     }
 };
+
+export const addCommentsColumn = async (db: SQLiteDatabase) => {
+    const table = 'Weight_Log';
+    try {
+        const columns = await db.getAllAsync<any>(`PRAGMA table_info(${table});`);
+        const columnExists = columns.some((col: any) => col.name === 'comments');
+
+        if (!columnExists) {
+            await db.runAsync(`ALTER TABLE ${table} ADD COLUMN comments TEXT;`);
+            console.log(`'comments' column added to '${table}' table.`);
+        }
+    } catch (error) {
+        console.error('Error adding comments column:', error);
+    }
+};

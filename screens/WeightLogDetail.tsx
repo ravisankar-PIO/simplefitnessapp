@@ -39,6 +39,7 @@ interface ExerciseLog {
     workout_date: number;
     day_name: string;
     difficulty: string | null;
+    comments: string | null;
 }
 
 export default function WeightLogDetail() {
@@ -84,7 +85,7 @@ export default function WeightLogDetail() {
 
   const updateExerciseWeightLog = (item: ExerciseLog,
                                   val: string,
-                                  updatedKeyName: 'weight_logged' | 'reps_logged',
+                                  updatedKeyName: 'weight_logged' | 'reps_logged' | 'comments',
                                   index: number) => {
     item[updatedKeyName] = val;
     setEditExerciseData(prev => prev.map((value, i) => i === index ? item : value))
@@ -185,10 +186,11 @@ export default function WeightLogDetail() {
         logged_exercise_id: number;
         muscle_group: string | null;
         difficulty: string | null;
+        comments: string | null;
       }>(
         `SELECT Weight_Log.exercise_name, Weight_Log.weight_log_id, Weight_Log.weight_logged, Weight_Log.reps_logged,
         Weight_Log.set_number, Workout_Log.workout_date, Workout_Log.day_name,
-        Weight_Log.logged_exercise_id, Weight_Log.muscle_group, Weight_Log.difficulty
+        Weight_Log.logged_exercise_id, Weight_Log.muscle_group, Weight_Log.difficulty, Weight_Log.comments
         FROM Weight_Log
         INNER JOIN Workout_Log ON Weight_Log.workout_log_id = Workout_Log.workout_log_id
         WHERE Workout_Log.day_name = ? AND Workout_Log.workout_date = ? AND Workout_Log.workout_name = ?
@@ -391,8 +393,8 @@ export default function WeightLogDetail() {
       }
 
       await db.runAsync(
-        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ?, difficulty = ? WHERE weight_log_id = ?',
-        [loggedWeight, loggedReps, item.difficulty || 'Medium', item.weight_log_id]
+        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ?, difficulty = ?, comments = ? WHERE weight_log_id = ?',
+        [loggedWeight, loggedReps, item.difficulty || 'Medium', item.comments || '', item.weight_log_id]
       );
     }
 
@@ -539,12 +541,18 @@ export default function WeightLogDetail() {
                             set.difficulty === 'Medium' ? ' 😐' : '';
 
                           return (
-                            <Text
-                              key={index}
-                              style={[styles.logDetail, { color: theme.text }]}
-                            >
-                              {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}{difficultyEmoji}
-                            </Text>
+                            <View key={index}>
+                              <Text
+                                style={[styles.logDetail, { color: theme.text }]}
+                              >
+                                {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}{difficultyEmoji}
+                              </Text>
+                              {set.comments && (
+                                <Text style={[styles.logComment, { color: theme.text }]}>
+                                  💬 {set.comments}
+                                </Text>
+                              )}
+                            </View>
                           );
                         })}
                       </View>
@@ -694,6 +702,17 @@ export default function WeightLogDetail() {
                              '😐 Medium'}
                           </Text>
                         </TouchableOpacity>
+                        <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>Comments</Text>
+                        <TextInput
+                          style={[styles.commentsInput, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
+                          placeholder=""
+                          placeholderTextColor={theme.text}
+                          multiline
+                          numberOfLines={2}
+                          maxLength={100}
+                          value={item.comments || ''}
+                          onChangeText={(val) => updateExerciseWeightLog(item, val, 'comments', index)}
+                        />
                       </View>
                     )
                   }}>
@@ -827,6 +846,13 @@ const styles = StyleSheet.create({
   logDetail: {
     fontSize: 14,
   },
+  logComment: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginLeft: 15,
+    marginTop: 3,
+    opacity: 0.8,
+  },
   emptyText: {
     textAlign: 'center',
     fontSize: 16,
@@ -912,6 +938,15 @@ const styles = StyleSheet.create({
   difficultyButtonText: {
     fontSize: 18,
     fontWeight: '600',
+  },
+  commentsInput: {
+    width: '100%',
+    height: 60,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    textAlignVertical: 'top',
   },
   modalTitle: {
     fontSize: 20,

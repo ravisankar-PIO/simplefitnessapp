@@ -1412,7 +1412,7 @@ export default function StartedWorkoutInterface() {
                 return (
                   <View key={index} style={[styles.historySetRow, { borderBottomColor: theme.border }]}>
                     <Text style={[styles.historySetText, { color: theme.text }]}>
-                      Set {historySet.setNumber}: {historySet.reps} reps × {historySet.weight} {weightFormat} {difficultyEmoji}
+                      Set {historySet.setNumber}: {historySet.weight} {weightFormat} × {historySet.reps} reps {difficultyEmoji}
                     </Text>
                   </View>
                 );

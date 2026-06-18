@@ -302,8 +302,8 @@ export default function LogWeights() {
           )}
         </View>
         <View style={styles.labelsRow}>
-          <Text style={[styles.label, { color: theme.text }]}>{t('repsPlaceholder')}</Text>
           <Text style={[styles.label, { color: theme.text }]}>{t('Weight')} ({weightFormat})</Text>
+          <Text style={[styles.label, { color: theme.text }]}>{t('repsPlaceholder')}</Text>
           <Text style={[styles.label, { color: theme.text }]}>Difficulty</Text>
         </View>
         {exerciseSets[exercise.logged_exercise_id]?.map((setNumber) => {
@@ -433,20 +433,20 @@ const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsCha
       <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
       <TextInput
         style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={t('repsPlaceholder')}
-        placeholderTextColor={theme.logborder}
-        keyboardType="numeric"
-        value={reps}
-        onChangeText={onRepsChange}
-      />
-
-      <TextInput
-        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
         placeholder={weightFormat}
         placeholderTextColor={theme.logborder}
         keyboardType="numeric"
         value={weight}
         onChangeText={onWeightChange}
+      />
+
+      <TextInput
+        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+        placeholder={t('repsPlaceholder')}
+        placeholderTextColor={theme.logborder}
+        keyboardType="numeric"
+        value={reps}
+        onChangeText={onRepsChange}
       />
 
       <TouchableOpacity

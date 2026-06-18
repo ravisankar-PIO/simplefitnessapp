@@ -1186,6 +1186,15 @@ export default function StartedWorkoutInterface() {
             {currentSet.exercise_name}
           </Text>
 
+          {/* Exercise Notes - Always Visible */}
+          {currentSet.exercise_notes && (
+            <View style={[styles.exerciseNotesContainer, { backgroundColor: theme.background, borderColor: theme.border }]}>
+              <Text style={[styles.exerciseNotesText, { color: theme.text }]}>
+                {currentSet.exercise_notes}
+              </Text>
+            </View>
+          )}
+
           {/* Suggested Weight Badge */}
           {suggestedWeights.has(currentSet.exercise_id) && (
             <View style={{ marginTop: 12, alignItems: 'center' }}>
@@ -2147,6 +2156,19 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  exerciseNotesContainer: {
+    marginTop: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  exerciseNotesText: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   setInfo: {
     fontSize: 18,

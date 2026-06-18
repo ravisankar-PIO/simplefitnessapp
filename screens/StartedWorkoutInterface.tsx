@@ -113,7 +113,11 @@ export default function StartedWorkoutInterface() {
   
   // Sets data for tracking workout
   const [allSets, setAllSets] = useState<ExerciseSet[]>([]);
-  
+
+  // State for "Add extra set" feature
+  const [isEditingExerciseName, setIsEditingExerciseName] = useState(false);
+  const [editableExerciseName, setEditableExerciseName] = useState('');
+
   // State for notes modal
   const [isNotesModalVisible, setIsNotesModalVisible] = useState(false);
   const [notesModalContent, setNotesModalContent] = useState('');
@@ -284,6 +288,9 @@ export default function StartedWorkoutInterface() {
       updatedSets[setData.setIndex] = { ...currentSet, set_logged: true, reps_done: setData.reps.toString(), weight: setData.weight.toString() };
       setAllSets(updatedSets);
       updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
+
+      // Reset exercise name editing mode after completing a set
+      setIsEditingExerciseName(false);
 
       // Check if this was the last set of the exercise
       const exerciseSets = updatedSets.filter(s => s.exercise_id === currentSet.exercise_id);
@@ -1185,9 +1192,35 @@ export default function StartedWorkoutInterface() {
         </View>
         
         <View style={[styles.currentExerciseCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.currentExerciseName, { color: theme.text }]}>
-            {currentSet.exercise_name}
-          </Text>
+          {isEditingExerciseName ? (
+            <TextInput
+              style={[styles.currentExerciseNameInput, {
+                color: theme.text,
+                backgroundColor: theme.background,
+                borderColor: theme.border
+              }]}
+              value={editableExerciseName}
+              onChangeText={(text) => {
+                setEditableExerciseName(text);
+                // Update the exercise name in allSets
+                const updatedSets = [...allSets];
+                updatedSets[timerState.currentSetIndex] = {
+                  ...updatedSets[timerState.currentSetIndex],
+                  exercise_name: text
+                };
+                setAllSets(updatedSets);
+              }}
+              onBlur={() => {
+                // Keep editing mode active if user clicks away
+                // They can manually disable it or it resets on set completion
+              }}
+              autoFocus={true}
+            />
+          ) : (
+            <Text style={[styles.currentExerciseName, { color: theme.text }]}>
+              {currentSet.exercise_name}
+            </Text>
+          )}
 
           {/* Exercise Notes - Always Visible */}
           {currentSet.exercise_notes && (
@@ -1349,6 +1382,17 @@ export default function StartedWorkoutInterface() {
                 {isCompletingSet ? `${t('completing')}...` : t('completeSet')}
                 </Text>
             </TouchableOpacity>
+
+            {/* Add Extra Set Button */}
+            <TouchableOpacity
+              style={[styles.addExtraSetButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={handleAddExtraSet}
+            >
+              <Text style={[styles.addExtraSetButtonText, { color: theme.text }]}>
+                + Add Extra Set
+              </Text>
+            </TouchableOpacity>
+
             <View style={styles.secondaryControlsContainer}>
                 {!isLastExercise &&
                   <TouchableOpacity
@@ -1874,6 +1918,47 @@ export default function StartedWorkoutInterface() {
         Alert.alert(t('noMoreExercises'), t('allFollowingExercisesLogged'));
     }
   };
+
+  const handleAddExtraSet = () => {
+    const currentSet = allSets[timerState.currentSetIndex];
+    if (!currentSet) return;
+
+    // Find the highest set number for the current exercise
+    const setsForExercise = allSets.filter(s => s.exercise_name === currentSet.exercise_name);
+    const maxSetNumber = Math.max(...setsForExercise.map(s => s.set_number), 0);
+
+    // Create new extra set
+    const newSet: ExerciseSet = {
+      exercise_name: currentSet.exercise_name,
+      exercise_id: currentSet.exercise_id,
+      set_number: maxSetNumber + 1,
+      total_sets: maxSetNumber + 1,
+      reps_goal: currentSet.reps_goal,
+      reps_done: currentSet.reps_done, // Pre-fill with current reps
+      weight: currentSet.weight, // Pre-fill with current weight
+      set_logged: false,
+      web_link: currentSet.web_link,
+      muscle_group: currentSet.muscle_group,
+      exercise_notes: currentSet.exercise_notes,
+      comments: '',
+    };
+
+    // Insert new set after current set
+    const newAllSets = [...allSets];
+    newAllSets.splice(timerState.currentSetIndex + 1, 0, newSet);
+    setAllSets(newAllSets);
+
+    // Move to the new set
+    setTimerState(prev => ({
+      ...prev,
+      currentSetIndex: timerState.currentSetIndex + 1,
+    }));
+
+    // Enable exercise name editing
+    setIsEditingExerciseName(true);
+    setEditableExerciseName(currentSet.exercise_name);
+  };
+
   const handleFinishWorkout = () => {
     const currentSetIndex = timerState.currentSetIndex;
     const currentSet = allSets[currentSetIndex];
@@ -2163,6 +2248,15 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  currentExerciseNameInput: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
   exerciseNotesContainer: {
     marginTop: 12,
     marginBottom: 8,
@@ -2227,6 +2321,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 15,
     paddingVertical: 15,
+  },
+  addExtraSetButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 10,
+    borderWidth: 1,
+  },
+  addExtraSetButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   progressContainer: {
     marginBottom: 20,

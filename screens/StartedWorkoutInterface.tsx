@@ -161,6 +161,7 @@ export default function StartedWorkoutInterface() {
     weight: number;
     difficulty: string | null;
     workoutDate: number;
+    comments: string | null;
   }>>>(new Map());
 
   // Fetch suggested weights for exercises
@@ -201,8 +202,9 @@ export default function StartedWorkoutInterface() {
         weight_logged: number;
         difficulty: string | null;
         workout_date: number;
+        comments: string | null;
       }>(
-        `SELECT wl.set_number, wl.reps_logged, wl.weight_logged, wl.difficulty, w.workout_date
+        `SELECT wl.set_number, wl.reps_logged, wl.weight_logged, wl.difficulty, wl.comments, w.workout_date
          FROM Weight_Log wl
          JOIN Workout_Log w ON wl.workout_log_id = w.workout_log_id
          WHERE wl.exercise_name = ?
@@ -223,6 +225,7 @@ export default function StartedWorkoutInterface() {
           weight: set.weight_logged,
           difficulty: set.difficulty || 'Medium',
           workoutDate: set.workout_date,
+          comments: set.comments || null,
         }));
       }
 
@@ -1421,6 +1424,11 @@ export default function StartedWorkoutInterface() {
                     <Text style={[styles.historySetText, { color: theme.text }]}>
                       Set {historySet.setNumber}: {historySet.weight} {weightFormat} × {historySet.reps} reps {difficultyEmoji}
                     </Text>
+                    {historySet.comments && (
+                      <Text style={[styles.historyCommentText, { color: theme.text }]}>
+                        💬 {historySet.comments}
+                      </Text>
+                    )}
                   </View>
                 );
               })}
@@ -2500,5 +2508,12 @@ const styles = StyleSheet.create({
   },
   historySetText: {
     fontSize: 14,
+  },
+  historyCommentText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginLeft: 8,
+    opacity: 0.8,
   },
 });

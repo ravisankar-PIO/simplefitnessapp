@@ -709,7 +709,7 @@ export default function WeightLogDetail() {
                           placeholderTextColor={theme.text}
                           multiline
                           numberOfLines={2}
-                          maxLength={100}
+                          maxLength={500}
                           value={item.comments || ''}
                           onChangeText={(val) => updateExerciseWeightLog(item, val, 'comments', index)}
                         />

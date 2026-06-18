@@ -1289,7 +1289,7 @@ export default function StartedWorkoutInterface() {
                 };
                 setAllSets(updatedSets);
               }}
-              maxLength={100}
+              maxLength={500}
               multiline
               numberOfLines={2}
             />

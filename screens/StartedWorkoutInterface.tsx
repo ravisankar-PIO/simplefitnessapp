@@ -1306,7 +1306,6 @@ export default function StartedWorkoutInterface() {
         </View>
         
         <View style={styles.controlsContainer}>
-            {!isLastStructuralSet &&
             <TouchableOpacity
                 style={[styles.completeButton, {
                 backgroundColor:
@@ -1344,10 +1343,9 @@ export default function StartedWorkoutInterface() {
                 }
             >
                 <Text style={[styles.buttonText, { color: theme.buttonText }]}>
-                {isCompletingSet ? `${t('completing')}...` : (isLastUnloggedSet ? t('finishWorkout') : t('completeSet'))}
+                {isCompletingSet ? `${t('completing')}...` : t('completeSet')}
                 </Text>
             </TouchableOpacity>
-            }
             <View style={styles.secondaryControlsContainer}>
                 {!isLastExercise &&
                   <TouchableOpacity

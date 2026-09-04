@@ -61,6 +61,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM This project's Gradle wrapper (android\gradle\wrapper\gradle-wrapper.properties)
+REM is pinned to Gradle 8.10.2, which does not support JDK versions newer than it
+REM (e.g. JDK 24) - that would otherwise fail later with a confusing "unsupported
+REM class file major version" Gradle error instead of a clear one here.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\check-java-version.ps1"
+if errorlevel 1 exit /b 1
+
 if "%ANDROID_HOME%"=="" if "%ANDROID_SDK_ROOT%"=="" (
   echo.
   echo ERROR: ANDROID_HOME / ANDROID_SDK_ROOT not set.

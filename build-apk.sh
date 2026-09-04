@@ -61,6 +61,18 @@ command -v java >/dev/null 2>&1 || fail_missing \
   "Java (JDK) not found on PATH." \
   "Install a JDK 17 (e.g. https://adoptium.net/temurin/releases/?version=17), set JAVA_HOME, and add it to PATH."
 
+# This project's Gradle wrapper (android/gradle/wrapper/gradle-wrapper.properties)
+# is pinned to Gradle 8.10.2, which does not support JDK versions newer than it
+# (e.g. JDK 24) - that would otherwise fail later with a confusing "unsupported
+# class file major version" Gradle error instead of a clear one here.
+JAVA_VERSION_STRING=$(java -version 2>&1 | head -n1 | grep -oE '"[^"]+"' | tr -d '"')
+JAVA_MAJOR=$(echo "$JAVA_VERSION_STRING" | sed -E 's/^1\.([0-9]+).*/\1/; t; s/^([0-9]+).*/\1/')
+if [ "$JAVA_MAJOR" != "17" ]; then
+  fail_missing \
+    "Detected JDK $JAVA_VERSION_STRING (major version $JAVA_MAJOR), but this project's Gradle wrapper (8.10.2) requires JDK 17." \
+    "Install JDK 17 (https://adoptium.net/temurin/releases/?version=17) and make sure JAVA_HOME/PATH point at it, not JDK $JAVA_MAJOR."
+fi
+
 if [ -z "${ANDROID_HOME:-}" ] && [ -z "${ANDROID_SDK_ROOT:-}" ]; then
   fail_missing \
     "ANDROID_HOME / ANDROID_SDK_ROOT not set." \

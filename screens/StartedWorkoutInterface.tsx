@@ -46,6 +46,11 @@ import {
     getSuggestedWeight,
     DEFAULT_WEIGHT_INCREMENT
 } from '../utils/difficultyUtils';
+import { getCachedCoachNote, saveCoachNote } from '../utils/coachNotesUtils';
+import { isSameDayAsToday, fetchMostRecentSessionForMuscleGroup, fetchRecentAllLogs, RecentSetRow } from '../utils/coachNoteContext';
+import { generateCoachNote } from '../utils/llmClient';
+import { loadSettings } from '../utils/settingsStorage';
+import { getLatestInBodySnapshot } from '../utils/inbodyStorage';
 
 type StartedWorkoutRouteProps = RouteProp<
   StartWorkoutStackParamList,
@@ -144,7 +149,24 @@ export default function StartedWorkoutInterface() {
   const restTimerRef = useRef<NodeJS.Timeout | null>(null);
   const weightMapRef = useRef(new Map<string, string>());
   const repsMapRef = useRef(new Map<string, string>());
-  
+
+  // --- Coach's note ---
+  const [coachNote, setCoachNote] = useState<string | null>(null);
+  const [coachNoteStatus, setCoachNoteStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
+  const [isCoachNoteDismissed, setIsCoachNoteDismissed] = useState(false);
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+  // Set true inside startWorkout() - the coach-note fetch-and-cache-write keeps
+  // running in the background even after this flips (so the result is cached for
+  // next time), but the UI update on resolution is skipped once it's true: surfacing
+  // a note mid-lift, after the user has already committed to the session, isn't
+  // actionable in the way it was meant to be.
+  const hasStartedWorkoutRef = useRef(false);
+
   const updateExerciseLoggedStatus = (exerciseId: number, currentSets: ExerciseSet[]) => {
     const exerciseSets = currentSets.filter(s => s.exercise_id === exerciseId);
     const allSetsLogged = exerciseSets.every(s => s.set_logged);
@@ -609,7 +631,82 @@ export default function StartedWorkoutInterface() {
 
     return unsubscribe;
   }, [navigation, timerState.workoutStarted, timerState.workoutStage, t]);
-  
+
+  // Coach's note: lazy, on-open, cached. Gated on !loading rather than just
+  // `workout` truthiness - fetchWorkoutDetails() sets workout and exercises via two
+  // separate sequential setState calls, so workout can become non-null one render
+  // before exercises is actually populated. loading only flips false once everything
+  // (including exercises) is set, so this is the point both are guaranteed ready.
+  useEffect(() => {
+    if (loading || !workout) return;
+
+    const resolveCoachNote = async () => {
+      setCoachNoteStatus('loading');
+      try {
+        const cached = await getCachedCoachNote(db, workout.workout_name, workout.day_name, workout.workout_date);
+        if (cached) {
+          if (!isMounted.current) return;
+          setCoachNote(cached.note_text);
+          setCoachNoteStatus('ready');
+          return;
+        }
+
+        // No cached row. Generation only ever runs for today's own session - a past
+        // date is already over (nothing left to act on), and a future-preview's
+        // recency window would be stale by the time that day actually arrives. A
+        // cache miss on any other date shows nothing, not even the "unavailable"
+        // indicator - that's reserved for a failed *attempt*, not a date that was
+        // never supposed to generate one.
+        if (!isSameDayAsToday(workout.workout_date)) {
+          if (!isMounted.current) return;
+          setCoachNoteStatus('idle');
+          return;
+        }
+
+        const muscleGroups = Array.from(
+          new Set(exercises.map((ex) => ex.muscle_group).filter((mg): mg is string => !!mg))
+        );
+
+        const recentMuscleGroupLogs: Record<string, RecentSetRow[]> = {};
+        for (const muscleGroup of muscleGroups) {
+          const rows = await fetchMostRecentSessionForMuscleGroup(db, muscleGroup, workout.workout_date, workout_log_id);
+          if (rows.length > 0) recentMuscleGroupLogs[muscleGroup] = rows;
+        }
+
+        const recentAllLogs = await fetchRecentAllLogs(db, workout.workout_date, workout_log_id);
+        const settings = await loadSettings();
+        const latestSnapshot = await getLatestInBodySnapshot();
+
+        const note = await generateCoachNote({
+          todaysExercises: exercises.map((ex) => ({
+            exercise_name: ex.exercise_name,
+            muscle_group: ex.muscle_group,
+            sets: ex.sets,
+            reps: ex.reps,
+          })),
+          recentMuscleGroupLogs,
+          recentAllLogs,
+          latestInBody: latestSnapshot,
+          standingConstraints: settings?.standingConstraints || '',
+        });
+
+        // Cache write happens regardless of whether the user has since started the
+        // workout - the result should be there next time this screen opens.
+        await saveCoachNote(db, workout.workout_name, workout.day_name, workout.workout_date, note);
+
+        if (!isMounted.current || hasStartedWorkoutRef.current) return;
+        setCoachNote(note);
+        setCoachNoteStatus('ready');
+      } catch (error) {
+        console.error('Error resolving coach note:', error);
+        if (!isMounted.current || hasStartedWorkoutRef.current) return;
+        setCoachNoteStatus('unavailable');
+      }
+    };
+
+    resolveCoachNote();
+  }, [loading, workout]);
+
   const showNotes = (notes: string, exerciseName: string) => {
     setNotesModalContent(notes);
     setNotesModalTitle(exerciseName);
@@ -904,6 +1001,8 @@ export default function StartedWorkoutInterface() {
       return;
     }
 
+    hasStartedWorkoutRef.current = true;
+
     try {
       await saveRestTimerPreferences({
         restTimeBetweenSets: restTime,
@@ -978,9 +1077,43 @@ export default function StartedWorkoutInterface() {
   ];
   
   // Rest of the render functions remain the same...
+  const renderCoachNoteBanner = () => {
+    if (isCoachNoteDismissed) return null;
+
+    if (coachNoteStatus === 'ready' && coachNote) {
+      return (
+        <View style={[styles.coachNoteBanner, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <View style={styles.coachNoteBannerHeader}>
+            <Ionicons name="bulb-outline" size={18} color={theme.text} style={{ marginRight: 6 }} />
+            <Text style={[styles.coachNoteBannerTitle, { color: theme.text }]}>{t('coachsNote') || "Coach's note"}</Text>
+            <TouchableOpacity onPress={() => setIsCoachNoteDismissed(true)} style={{ marginLeft: 'auto' }}>
+              <Ionicons name="close" size={18} color={theme.text} />
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.coachNoteBannerText, { color: theme.text }]}>{coachNote}</Text>
+        </View>
+      );
+    }
+
+    if (coachNoteStatus === 'unavailable') {
+      return (
+        <View style={[styles.coachNoteBanner, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.coachNoteUnavailableText, { color: theme.text }]}>
+            {t('coachsNoteUnavailable') || "Coach's note unavailable"}
+          </Text>
+        </View>
+      );
+    }
+
+    // 'idle' (nothing to show, or not today) and 'loading' both render nothing here -
+    // the note is supplementary, not something worth a spinner blocking the screen.
+    return null;
+  };
+
   const renderOverview = () => {
     return (
       <View style={styles.overviewContainer}>
+        {renderCoachNoteBanner()}
         <View style={[styles.workoutHeaderCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text style={[styles.workoutName, { color: theme.text }]}>{workout?.workout_name}</Text>
           <Text style={[styles.workoutDay, { color: theme.text }]}>{workout?.day_name}</Text>
@@ -2121,6 +2254,30 @@ const styles = StyleSheet.create({
   // Overview screen styles
   overviewContainer: {
     width: '100%',
+  },
+  coachNoteBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 15,
+  },
+  coachNoteBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  coachNoteBannerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  coachNoteBannerText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  coachNoteUnavailableText: {
+    fontSize: 12,
+    opacity: 0.6,
+    fontStyle: 'italic',
   },
   workoutHeaderCard: {
     borderRadius: 15,

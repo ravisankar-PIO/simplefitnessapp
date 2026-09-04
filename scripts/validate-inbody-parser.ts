@@ -11,6 +11,7 @@ import {
   parseInBodyCSV,
   parseInBodyJSON,
   dedupeSnapshots,
+  computeMergeStats,
   InBodySnapshot,
 } from '../utils/inbodyParser';
 
@@ -100,6 +101,45 @@ try {
   threw = true;
 }
 assert(threw, 'CSV missing the Date column throws rather than silently mis-parsing');
+
+// --- computeMergeStats: upload CSV into an empty store ---
+// 13 raw rows, two same-day pairs (Aug 8, Apr 4) -> 11 "added" (one per distinct date)
+// + 2 "same-day collapsed" (the second entry in each pair), 0 duplicates, 0 enriched.
+const csvOnlyStats = computeMergeStats([], csvSnapshots);
+assert(csvOnlyStats.addedCount === 11, `CSV-into-empty-store: addedCount is 11 (got ${csvOnlyStats.addedCount})`);
+assert(csvOnlyStats.sameDayCollapsedCount === 2, `CSV-into-empty-store: sameDayCollapsedCount is 2 (got ${csvOnlyStats.sameDayCollapsedCount})`);
+assert(csvOnlyStats.exactDuplicateCount === 0, `CSV-into-empty-store: exactDuplicateCount is 0 (got ${csvOnlyStats.exactDuplicateCount})`);
+assert(csvOnlyStats.enrichedCount === 0, `CSV-into-empty-store: enrichedCount is 0 (got ${csvOnlyStats.enrichedCount})`);
+
+// --- computeMergeStats: re-uploading the same CSV file again ---
+// The stored pool only kept the WINNING timestamp from each same-day pair - the
+// discarded one was never saved, so re-uploading it reports as a fresh same-day
+// collision again (correctly), not as an exact duplicate of something never stored.
+// 11 kept timestamps -> exact duplicates; the 2 previously-discarded timestamps ->
+// same-day collapsed again.
+const csvAlreadyStored = dedupeSnapshots(csvSnapshots);
+const csvReuploadStats = computeMergeStats(csvAlreadyStored, csvSnapshots);
+assert(
+  csvReuploadStats.exactDuplicateCount === 11,
+  `CSV re-upload: the 11 stored timestamps are exact duplicates (got ${csvReuploadStats.exactDuplicateCount})`
+);
+assert(
+  csvReuploadStats.sameDayCollapsedCount === 2,
+  `CSV re-upload: the 2 previously-discarded timestamps collide again as same-day (got ${csvReuploadStats.sameDayCollapsedCount})`
+);
+assert(
+  csvReuploadStats.addedCount === 0 && csvReuploadStats.enrichedCount === 0,
+  'CSV re-upload: nothing genuinely new, nothing enriched'
+);
+
+// --- computeMergeStats: uploading the JSON file after the CSV is already stored ---
+// All 8 JSON dates are a subset of the 11 CSV dates already stored -> pure enrichment.
+const jsonAfterCsvStats = computeMergeStats(csvAlreadyStored, jsonSnapshots);
+assert(jsonAfterCsvStats.enrichedCount === 8, `JSON-after-CSV: enrichedCount is 8 (got ${jsonAfterCsvStats.enrichedCount})`);
+assert(
+  jsonAfterCsvStats.addedCount === 0 && jsonAfterCsvStats.sameDayCollapsedCount === 0 && jsonAfterCsvStats.exactDuplicateCount === 0,
+  'JSON-after-CSV: no added/collapsed/duplicate entries, purely enrichment'
+);
 
 console.log(`\n${failures === 0 ? 'All checks passed.' : `${failures} check(s) failed.`}`);
 process.exit(failures === 0 ? 0 : 1);

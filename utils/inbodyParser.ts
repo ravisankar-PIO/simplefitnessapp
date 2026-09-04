@@ -164,6 +164,9 @@ export const parseInBodyJSON = (jsonText: string): InBodySnapshot[] => {
     .filter((snap: InBodySnapshot) => snap.source_timestamp.length > 0);
 };
 
+const dateKeyOf = (snap: InBodySnapshot) => snap.source_timestamp.slice(0, 8);
+const otherSource = (source: 'csv' | 'json'): 'csv' | 'json' => (source === 'csv' ? 'json' : 'csv');
+
 // Collapse exact-timestamp duplicates within one source, then same-day duplicates
 // within that same source — keeping the latest time-of-day. Default assumption: a
 // same-day retake means the earlier reading looked wrong. Adjustable, not a hard fact.
@@ -191,7 +194,6 @@ export const dedupeSnapshots = (snapshots: InBodySnapshot[]): InBodySnapshot[] =
   const csvSnapshots = dedupeWithinSource(snapshots.filter((s) => s.source === 'csv'));
   const jsonSnapshots = dedupeWithinSource(snapshots.filter((s) => s.source === 'json'));
 
-  const dateKeyOf = (snap: InBodySnapshot) => snap.source_timestamp.slice(0, 8);
   const jsonByDate = new Map<string, InBodySnapshot>();
   for (const snap of jsonSnapshots) jsonByDate.set(dateKeyOf(snap), snap);
 
@@ -211,4 +213,62 @@ export const dedupeSnapshots = (snapshots: InBodySnapshot[]): InBodySnapshot[] =
   }
 
   return merged.sort((a, b) => a.scan_date.localeCompare(b.scan_date));
+};
+
+export interface MergeStats {
+  addedCount: number; // genuinely new dates, not covered by either source before this upload
+  exactDuplicateCount: number; // exact-timestamp re-uploads of a scan already stored
+  sameDayCollapsedCount: number; // same source, same date, different time-of-day - discarded by the collapse
+  enrichedCount: number; // date already covered by the OTHER source before this upload, now gaining/changing notes
+}
+
+// Classifies each snapshot in `incoming` relative to what was already in `existingPool`
+// before this upload, for user-facing upload summaries. This is a separate analysis
+// pass alongside dedupeSnapshots — it does not change what gets stored, only reports
+// on it. Must diff against the pre-upload pool specifically (not just re-derive totals
+// from the final merged array), since exact/same-day/cross-source cases all look
+// different depending on what existed *before* this particular upload.
+export const computeMergeStats = (
+  existingPool: InBodySnapshot[],
+  incoming: InBodySnapshot[]
+): MergeStats => {
+  const stats: MergeStats = { addedCount: 0, exactDuplicateCount: 0, sameDayCollapsedCount: 0, enrichedCount: 0 };
+
+  // Frozen snapshot of what each source covered BEFORE this upload - used only for the
+  // cross-source enrichment check, so an upload can't "enrich" against its own dates.
+  const originalDatesBySource: Record<'csv' | 'json', Set<string>> = { csv: new Set(), json: new Set() };
+  for (const snap of existingPool) originalDatesBySource[snap.source].add(dateKeyOf(snap));
+
+  // Running state, seeded from existingPool then updated as `incoming` is walked in
+  // order - so two same-day entries within the same upload (neither seen before) are
+  // correctly split into one "added" + one "same-day collapsed," not double-counted as
+  // two "added."
+  const runningTimestampsBySource: Record<'csv' | 'json', Set<string>> = { csv: new Set(), json: new Set() };
+  const runningDatesBySource: Record<'csv' | 'json', Set<string>> = { csv: new Set(), json: new Set() };
+  for (const snap of existingPool) {
+    runningTimestampsBySource[snap.source].add(snap.source_timestamp);
+    runningDatesBySource[snap.source].add(dateKeyOf(snap));
+  }
+
+  for (const inc of incoming) {
+    const date = dateKeyOf(inc);
+
+    if (runningTimestampsBySource[inc.source].has(inc.source_timestamp)) {
+      stats.exactDuplicateCount++;
+      continue;
+    }
+
+    if (runningDatesBySource[inc.source].has(date)) {
+      stats.sameDayCollapsedCount++;
+    } else if (originalDatesBySource[otherSource(inc.source)].has(date)) {
+      stats.enrichedCount++;
+    } else {
+      stats.addedCount++;
+    }
+
+    runningTimestampsBySource[inc.source].add(inc.source_timestamp);
+    runningDatesBySource[inc.source].add(date);
+  }
+
+  return stats;
 };

@@ -41,6 +41,7 @@
   import { AppState } from 'react-native';
   import GraphsWorkoutDetails from './screens/GraphsWorkoutDetails';
   import { addCoachNotesTable } from './utils/coachNotesUtils';
+  import CoachProfile from './screens/CoachProfile';
 
 
 
@@ -50,6 +51,7 @@
   const WorkoutLogStackScreen= createNativeStackNavigator<WorkoutLogStackParamList>();
   const WeightLogStackScreen= createNativeStackNavigator<WeightLogStackParamList>();
   const StartWorkoutStackScreen = createNativeStackNavigator<StartWorkoutStackParamList>();
+  const SettingsStackScreen = createNativeStackNavigator<SettingsStackParamList>();
 
   
 
@@ -157,6 +159,11 @@
   export type StartWorkoutStackParamList = {
     StartWorkout: { fromNotification?: boolean } | undefined;
     StartedWorkoutInterface: { workout_log_id: number };
+  }
+
+  export type SettingsStackParamList = {
+    SettingsMain: undefined;
+    CoachProfile: undefined;
   }
 
   function WorkoutStack() {
@@ -305,6 +312,27 @@
     );
   }
 
+  function SettingsStack() {
+    return (
+      <SettingsStackScreen.Navigator
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        <SettingsStackScreen.Screen
+          name="SettingsMain"
+          component={Settings}
+          options={{ headerShown: false }}
+        />
+        <SettingsStackScreen.Screen
+          name="CoachProfile"
+          component={CoachProfile}
+          options={{ headerShown: false }}
+        />
+      </SettingsStackScreen.Navigator>
+    );
+  }
+
   /*function StartWorkoutStack() {
     return (
       <StartWorkoutStackScreen.Navigator
@@ -440,7 +468,7 @@ const AppContent = () => {
 
        <Bottom.Screen
          name="Settings"
-         component={Settings}
+         component={SettingsStack}
          options={{
            tabBarButton: (props) => (
              <TabButton {...props} iconName="settings-sharp" />

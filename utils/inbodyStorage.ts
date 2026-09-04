@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system';
-import { InBodySnapshot, parseInBodyCSV, parseInBodyJSON, dedupeSnapshots } from './inbodyParser';
+import { InBodySnapshot, MergeStats, parseInBodyCSV, parseInBodyJSON, dedupeSnapshots, computeMergeStats } from './inbodyParser';
 
-export type { InBodySnapshot };
+export type { InBodySnapshot, MergeStats };
 export { parseInBodyCSV, parseInBodyJSON, dedupeSnapshots };
 
 const INBODY_FILE = `${FileSystem.documentDirectory}inbodySnapshots.json`;
@@ -28,11 +28,12 @@ export const saveInBodySnapshots = async (snapshots: InBodySnapshot[]): Promise<
 
 export const mergeAndSaveInBodySnapshots = async (
   newSnapshots: InBodySnapshot[]
-): Promise<InBodySnapshot[]> => {
+): Promise<{ snapshots: InBodySnapshot[]; stats: MergeStats }> => {
   const existing = await loadInBodySnapshots();
+  const stats = computeMergeStats(existing, newSnapshots);
   const merged = dedupeSnapshots([...existing, ...newSnapshots]);
   await saveInBodySnapshots(merged);
-  return merged;
+  return { snapshots: merged, stats };
 };
 
 export const getLatestInBodySnapshot = async (): Promise<InBodySnapshot | null> => {

@@ -211,3 +211,13 @@ export const generateCoachNote = async (
   const text = (await callLLM(buildCoachNotePrompt(context))).trim();
   return text === 'NONE' || text === '' ? null : text;
 };
+
+// For the Settings "test connection" button. Deliberately calls callLLM directly
+// rather than generateWorkoutPlan/generateAndValidatePlan - this is a connectivity
+// check, not a plan generation, so it has no reason to run the schema-validation/
+// retry-on-malformed-JSON path built for that. Throws the same typed errors as every
+// other call site, so callers can reuse getUserFacingErrorMessage rather than writing
+// new copy for this one button.
+export const testConnection = async (): Promise<void> => {
+  await callLLM('Respond with the word OK.');
+};

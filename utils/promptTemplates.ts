@@ -42,10 +42,22 @@ Additional notes from the user: ${context.freeTextOverride}
 ${PLAN_SCHEMA_INSTRUCTION}
 `;
 
-export const buildRefinePrompt = (currentDraft: object, feedback: string): string => `
+// Goals/split/availability aren't re-sent here - they already shaped currentDraft, so
+// re-sending them would be redundant. Equipment/standingConstraints/latestInBody DO
+// still belong here, fetched fresh each round rather than carried over from the
+// original Generate call, so a stale equipment snapshot from round 1 can't leak into
+// round 3's suggestions.
+export const buildRefinePrompt = (
+  currentDraft: object,
+  feedback: string,
+  context: { equipment: string[]; standingConstraints: string; latestInBody: unknown }
+): string => `
 You previously proposed this workout plan:
 ${JSON.stringify(currentDraft)}
 The user's feedback: ${feedback}
+Available equipment: ${context.equipment.join(', ')}
+Standing constraints (injuries, scheduling limits, etc.): ${context.standingConstraints}
+Latest body composition reading: ${JSON.stringify(context.latestInBody)}
 Revise the plan accordingly. Keep everything the user didn't ask to change.
 ${PLAN_SCHEMA_INSTRUCTION}
 `;

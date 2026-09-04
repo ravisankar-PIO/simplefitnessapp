@@ -7,7 +7,7 @@ import slugify from 'slugify';
 
 
 // Define the structure of the exported JSON
-interface ExportedExercise {
+export interface ExportedExercise {
   exercise_name: string;
   sets: number;
   reps: number;
@@ -16,12 +16,12 @@ interface ExportedExercise {
   exercise_notes: string | null;
 }
 
-interface ExportedDay {
+export interface ExportedDay {
   day_name: string;
   exercises: ExportedExercise[];
 }
 
-interface ExportedWorkout {
+export interface ExportedWorkout {
   workout_name: string;
   days: ExportedDay[];
 }
@@ -101,48 +101,56 @@ export const exportWorkout = async (db: any, workoutId: number) => {
   }
 };
 
+export interface ImportWorkoutResult {
+  success: boolean;
+  workoutId?: number;
+  error?: string;
+}
+
 /**
  * Imports a workout from a JSON string into the database.
  * @param db - The SQLite database connection object.
  * @param jsonString - The JSON string representing the workout.
- * @returns {Promise<boolean>} - True if import was successful, false otherwise.
+ * @returns The new workout's ID on success, or an error message on failure.
  */
-export const importWorkout = async (db: any, jsonString: string): Promise<boolean> => {
+export const importWorkout = async (db: any, jsonString: string): Promise<ImportWorkoutResult> => {
     try {
       const workoutData: ExportedWorkout = JSON.parse(jsonString);
-  
+
       // Basic validation
       if (!workoutData.workout_name || !Array.isArray(workoutData.days)) {
         throw new Error('Invalid workout data format.');
       }
-      
+
       // Check if workout name already exists
       const workoutName = workoutData.workout_name;
       const existingWorkout = await db.getFirstAsync('SELECT workout_id FROM Workouts WHERE workout_name = ?', [workoutName]);
 
       if (existingWorkout) {
         Alert.alert(i18n.t('importFailedTitle'), i18n.t('workoutAlreadyExistsError'));
-        return false;
+        return { success: false, error: 'workout_already_exists' };
       }
-  
+
+      let newWorkoutId: number | undefined;
+
       await db.withTransactionAsync(async () => {
         // Insert workout
         const workoutResult = await db.runAsync('INSERT INTO Workouts (workout_name) VALUES (?)', [workoutName]);
-        const newWorkoutId = workoutResult.lastInsertRowId;
-  
+        newWorkoutId = workoutResult.lastInsertRowId;
+
         if (!newWorkoutId) {
           throw new Error('Failed to create new workout.');
         }
-  
+
         // Insert days and exercises
         for (const day of workoutData.days) {
           const dayResult = await db.runAsync('INSERT INTO Days (workout_id, day_name) VALUES (?, ?)', [newWorkoutId, day.day_name]);
           const newDayId = dayResult.lastInsertRowId;
-  
+
           if (!newDayId) {
             throw new Error(`Failed to create day: ${day.day_name}`);
           }
-  
+
           for (const exercise of day.exercises) {
             await db.runAsync(
               'INSERT INTO Exercises (day_id, exercise_name, sets, reps, web_link, muscle_group, exercise_notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -151,11 +159,11 @@ export const importWorkout = async (db: any, jsonString: string): Promise<boolea
           }
         }
       });
-  
-      return true;
+
+      return { success: true, workoutId: newWorkoutId };
     } catch (error) {
       console.error('Error importing workout:', error);
       Alert.alert(i18n.t('importFailedTitle'), i18n.t('fileNotSelectedError'));
-      return false;
+      return { success: false, error: 'import_failed' };
     }
   }; 

@@ -42,6 +42,7 @@
   import GraphsWorkoutDetails from './screens/GraphsWorkoutDetails';
   import { addCoachNotesTable } from './utils/coachNotesUtils';
   import CoachProfile from './screens/CoachProfile';
+  import GeneratePlan from './screens/GeneratePlan';
 
 
 
@@ -127,13 +128,19 @@
   export type WorkoutStackParamList = {
     WorkoutsList: undefined; // No parameters for this route
     CreateWorkout: undefined; // No parameters for this route
-    WorkoutDetails: { workout_id: number }; // Add this
+    // Saved mode loads from the DB by workout_id, same as always. Draft mode carries
+    // an in-memory ExportedWorkout from GeneratePlan - never a DB row - and WorkoutDetails
+    // must not re-read route.params after the initial mount (see draft-mode notes there).
+    WorkoutDetails:
+      | { mode: 'saved'; workout_id: number }
+      | { mode: 'draft'; draftWorkout: import('./utils/workoutSharingUtils').ExportedWorkout };
     EditWorkout: { workout_id: number }; // Only `workout_id` for editing a workout
     TemplateList: undefined;
     DifficultyList: undefined;
     Difficulty: undefined;
     Template: { workout_difficulty: string };
     TemplateDetails: { workout_id: number };
+    GeneratePlan: undefined;
   };
 
   export type WorkoutLogStackParamList = {
@@ -209,6 +216,11 @@
           name='TemplateDetails'
           component={TemplateDetails}
           options={{title: 'TemplateDetails'}}
+          />
+        <WorkoutStackScreen.Screen
+          name='GeneratePlan'
+          component={GeneratePlan}
+          options={{ headerShown: false }}
           />
       </WorkoutStackScreen.Navigator>
       </SQLiteProvider>

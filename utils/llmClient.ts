@@ -1,6 +1,7 @@
 import { getApiKey } from './secureSettings';
 import { loadSettings } from './settingsStorage';
 import { buildGeneratePrompt, buildRefinePrompt, buildCoachNotePrompt } from './promptTemplates';
+import { ExportedWorkout } from './workoutSharingUtils';
 
 const PROVIDER_ENDPOINTS: Record<string, string> = {
   groq: 'https://api.groq.com/openai/v1/chat/completions',
@@ -181,7 +182,7 @@ const validatePlanShape = (obj: any): boolean =>
       )
   );
 
-const generateAndValidatePlan = async (prompt: string): Promise<any> => {
+const generateAndValidatePlan = async (prompt: string): Promise<ExportedWorkout> => {
   // callLLM can throw LLMAuthError/LLMRateLimitError/LLMNetworkError - those propagate
   // immediately, uncaught here. Only a malformed/empty response triggers the retry.
   let text = await callLLM(prompt);
@@ -199,11 +200,14 @@ const generateAndValidatePlan = async (prompt: string): Promise<any> => {
   return parsed;
 };
 
-export const generateWorkoutPlan = (context: Parameters<typeof buildGeneratePrompt>[0]) =>
+export const generateWorkoutPlan = (context: Parameters<typeof buildGeneratePrompt>[0]): Promise<ExportedWorkout> =>
   generateAndValidatePlan(buildGeneratePrompt(context));
 
-export const refinePlan = (currentDraft: object, feedback: string) =>
-  generateAndValidatePlan(buildRefinePrompt(currentDraft, feedback));
+export const refinePlan = (
+  currentDraft: ExportedWorkout,
+  feedback: string,
+  context: Parameters<typeof buildRefinePrompt>[2]
+): Promise<ExportedWorkout> => generateAndValidatePlan(buildRefinePrompt(currentDraft, feedback, context));
 
 export const generateCoachNote = async (
   context: Parameters<typeof buildCoachNotePrompt>[0]

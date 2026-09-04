@@ -23,21 +23,7 @@ import {
   loadInBodySnapshots,
   InBodySnapshot,
 } from '../utils/inbodyStorage';
-
-// Fixed vocabulary, matching the pattern used for muscle_group elsewhere in this app
-// (see WeightLogDetail.tsx) - gives the LLM a consistent equipment list to reason
-// over instead of free-text variants of the same thing ("dumbbells" vs "DBs").
-const FIXED_EQUIPMENT = [
-  'Dumbbells',
-  'Barbell',
-  'Bench',
-  'Squat Rack',
-  'Pull-up Bar',
-  'Cable Machine',
-  'Resistance Bands',
-  'Kettlebell',
-  'Bodyweight Only',
-];
+import EquipmentSelector, { FIXED_EQUIPMENT, parseCustomEquipment } from '../components/EquipmentSelector';
 
 export default function CoachProfile() {
   const { theme } = useTheme();
@@ -85,12 +71,6 @@ export default function CoachProfile() {
     setLatestSnapshot(all.length > 0 ? all[all.length - 1] : null);
     setPreviousSnapshot(all.length > 1 ? all[all.length - 2] : null);
   };
-
-  const parseCustomEquipment = (text: string): string[] =>
-    text
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
 
   // Persisted individually per field, on blur/change, rather than batched behind a
   // single "Save" button - matches how the rest of this app's settings screens work
@@ -204,46 +184,12 @@ export default function CoachProfile() {
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>{t('equipmentTitle') || 'Equipment'}</Text>
-          <Text style={[styles.sectionSubtitle, { color: theme.text }]}>
-            {t('equipmentSubtitle') || 'Select all that apply'}
-          </Text>
-          <View style={styles.equipmentGrid}>
-            {FIXED_EQUIPMENT.map((item) => {
-              const isSelected = selectedEquipment.includes(item);
-              return (
-                <TouchableOpacity
-                  key={item}
-                  style={[
-                    styles.equipmentButton,
-                    { borderColor: theme.border, backgroundColor: isSelected ? theme.buttonBackground : theme.card },
-                  ]}
-                  onPress={() => handleToggleEquipment(item)}
-                >
-                  <Text style={[styles.equipmentButtonText, { color: isSelected ? theme.buttonText : theme.text }]}>
-                    {item}
-                  </Text>
-                  {isSelected && (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={16}
-                      color={theme.buttonText}
-                      style={styles.equipmentCheckmark}
-                    />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <Text style={[styles.inputLabel, { color: theme.text, marginTop: 15 }]}>
-            {t('otherEquipmentLabel') || 'Other (comma-separated)'}
-          </Text>
-          <TextInput
-            style={[styles.input, { color: theme.text, backgroundColor: theme.card, borderColor: theme.border }]}
-            placeholder={t('otherEquipmentPlaceholder') || 'e.g. TRX, foam roller'}
-            placeholderTextColor={theme.text}
-            value={otherEquipment}
-            onChangeText={setOtherEquipment}
-            onBlur={handleOtherEquipmentBlur}
+          <EquipmentSelector
+            selectedFixed={selectedEquipment}
+            otherText={otherEquipment}
+            onToggleFixed={handleToggleEquipment}
+            onOtherTextChange={setOtherEquipment}
+            onOtherTextBlur={handleOtherEquipmentBlur}
           />
         </View>
 
@@ -346,26 +292,6 @@ const styles = StyleSheet.create({
   multilineInput: {
     minHeight: 90,
     textAlignVertical: 'top',
-  },
-  equipmentGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  equipmentButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  equipmentButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  equipmentCheckmark: {
-    marginLeft: 6,
   },
   snapshotCard: {
     borderWidth: 1,

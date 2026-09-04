@@ -40,6 +40,7 @@
   import { checkAndSyncPermissions } from './utils/notificationUtils';
   import { AppState } from 'react-native';
   import GraphsWorkoutDetails from './screens/GraphsWorkoutDetails';
+  import { addCoachNotesTable } from './utils/coachNotesUtils';
 
 
 
@@ -374,7 +375,15 @@ const AppContent = () => {
           </View>
         }
       />
-      <SQLiteProvider databaseName="SimpleDB.db" useSuspense>
+      {/*
+        Coach_Notes is the one migration in this app run centrally (via onInit)
+        instead of ad-hoc from a screen's mount effect, like every other migration
+        here (see utils/exerciseDetailUtils.ts, utils/addRecurringTable.ts). It has
+        no single owning screen — it's read by the today's-workout screen, which has
+        no reason to run migrations — so it's guaranteed to exist here instead.
+        Both patterns are intentional; don't refactor one into the other.
+      */}
+      <SQLiteProvider databaseName="SimpleDB.db" useSuspense onInit={addCoachNotesTable}>
         <RecurringWorkoutManager />
         
         <Bottom.Navigator

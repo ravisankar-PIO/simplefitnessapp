@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,12 @@ import {
   ScrollView,
   Alert,
   Linking,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import { useSettings } from '../context/SettingsContext';
 import { useTheme } from '../context/ThemeContext';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +21,12 @@ import { useNotifications } from '../utils/useNotifications';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import { SettingsStackParamList } from '../App';
+import { loadSettings, saveSettings } from '../utils/settingsStorage';
+import { getApiKey, saveApiKey, deleteApiKey } from '../utils/secureSettings';
+import { SUPPORTED_PROVIDERS, testConnection, getUserFacingErrorMessage } from '../utils/llmClient';
+
+type SettingsNavigationProp = StackNavigationProp<SettingsStackParamList, 'SettingsMain'>;
 
 export default function Settings() {
   const {
@@ -35,6 +45,7 @@ export default function Settings() {
   } = useSettings();
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation(); // for translations
+  const navigation = useNavigation<SettingsNavigationProp>();
 
   // Use the notifications hook to access all notification-related functionality
   const { requestNotificationPermission, cancelAllNotifications } =
@@ -42,6 +53,79 @@ export default function Settings() {
 
   // Manages whether the language dropdown is visible
   const [languageDropdownVisible, setLanguageDropdownVisible] = useState(false);
+
+  // --- AI Coaching settings ---
+  const [aiProvider, setAiProvider] = useState(SUPPORTED_PROVIDERS[0]);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isAiInitialized, setIsAiInitialized] = useState(false);
+
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const initializeAiSettings = async () => {
+      const settings = await loadSettings();
+      const storedKey = await getApiKey();
+      if (!isMounted.current) return;
+      if (settings?.aiProvider) setAiProvider(settings.aiProvider);
+      if (storedKey) setApiKeyInput(storedKey);
+      setIsAiInitialized(true);
+    };
+    initializeAiSettings();
+  }, []);
+
+  const handleProviderChange = (provider: string) => {
+    setAiProvider(provider);
+    saveSettings({ aiProvider: provider });
+  };
+
+  const handleApiKeyBlur = () => {
+    if (apiKeyInput.trim().length > 0) {
+      saveApiKey(apiKeyInput.trim());
+    }
+    setTestResult(null);
+  };
+
+  const handleDeleteApiKey = () => {
+    Alert.alert(
+      t('removeApiKeyTitle') || 'Remove API Key',
+      t('removeApiKeyMessage') || 'This will remove your saved API key. AI features will stop working until you add a new one.',
+      [
+        { text: t('cancel') || 'Cancel', style: 'cancel' },
+        {
+          text: t('confirm') || 'Confirm',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteApiKey();
+            if (isMounted.current) {
+              setApiKeyInput('');
+              setTestResult(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      await testConnection();
+      if (isMounted.current) setTestResult({ success: true, message: t('connectionSuccess') || 'Connection successful.' });
+    } catch (error) {
+      if (isMounted.current) setTestResult({ success: false, message: getUserFacingErrorMessage(error) });
+    } finally {
+      if (isMounted.current) setTestingConnection(false);
+    }
+  };
 
   // Languages array with i18n-compatible codes
   const languages = [
@@ -643,6 +727,122 @@ export default function Settings() {
           </View>
         </View>
 
+        {/*
+          AI Coaching settings use theme tokens throughout (theme.card/theme.border/
+          theme.buttonBackground etc.), unlike the rest of this screen's hardcoded
+          #000000/#FFFFFF colors above. That's a deliberate, visible seam, not an
+          oversight: the hardcoded colors are Settings.tsx failing to follow
+          ThemeContext (which the theme toggle right on this screen proves works
+          correctly), not an established convention worth matching. New code
+          shouldn't add to that bug - fixing the rest of the screen is a separate,
+          unrelated change outside this batch's scope.
+        */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.text }]}>
+            {t('aiCoachingTitle') || 'AI Coaching'}
+          </Text>
+
+          <Text style={[styles.themedInputLabel, { color: theme.text }]}>
+            {t('aiProviderLabel') || 'Provider'}
+          </Text>
+          <View style={styles.themedButtonGroup}>
+            {SUPPORTED_PROVIDERS.map((provider) => {
+              const isActive = aiProvider === provider;
+              return (
+                <TouchableOpacity
+                  key={provider}
+                  style={[
+                    styles.themedButton,
+                    {
+                      borderColor: theme.border,
+                      backgroundColor: isActive ? theme.buttonBackground : theme.card,
+                    },
+                  ]}
+                  onPress={() => handleProviderChange(provider)}
+                >
+                  <Text style={[styles.themedButtonText, { color: isActive ? theme.buttonText : theme.text }]}>
+                    {provider}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.themedInputLabel, { color: theme.text, marginTop: 15 }]}>
+            {t('apiKeyLabel') || 'API Key'}
+          </Text>
+          <View style={styles.apiKeyRow}>
+            <TextInput
+              style={[
+                styles.themedInput,
+                styles.apiKeyInput,
+                { color: theme.text, backgroundColor: theme.card, borderColor: theme.border },
+              ]}
+              placeholder={t('apiKeyPlaceholder') || 'Paste your API key'}
+              placeholderTextColor={theme.text}
+              value={apiKeyInput}
+              onChangeText={setApiKeyInput}
+              onBlur={handleApiKeyBlur}
+              secureTextEntry={!showApiKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={isAiInitialized}
+            />
+            <TouchableOpacity
+              style={[styles.apiKeyEyeButton, { borderColor: theme.border, backgroundColor: theme.card }]}
+              onPress={() => setShowApiKey((v) => !v)}
+            >
+              <Ionicons name={showApiKey ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.text} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.aiActionRow}>
+            <TouchableOpacity
+              style={[styles.themedActionButton, { backgroundColor: theme.buttonBackground, borderColor: theme.border }]}
+              onPress={handleTestConnection}
+              disabled={testingConnection || apiKeyInput.trim().length === 0}
+            >
+              {testingConnection ? (
+                <ActivityIndicator size="small" color={theme.buttonText} />
+              ) : (
+                <Text style={[styles.themedActionButtonText, { color: theme.buttonText }]}>
+                  {t('testConnection') || 'Test Connection'}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.themedActionButtonOutline, { borderColor: theme.border }]}
+              onPress={handleDeleteApiKey}
+            >
+              <Text style={[styles.themedActionButtonText, { color: theme.text }]}>
+                {t('removeApiKey') || 'Remove Key'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {testResult && (
+            <Text
+              style={[
+                styles.testResultText,
+                { color: testResult.success ? '#2e7d32' : '#c62828' },
+              ]}
+            >
+              {testResult.message}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            style={[styles.coachProfileLink, { borderColor: theme.border, backgroundColor: theme.card }]}
+            onPress={() => navigation.navigate('CoachProfile')}
+          >
+            <Ionicons name="body-outline" size={18} color={theme.text} style={{ marginRight: 8 }} />
+            <Text style={[styles.themedActionButtonText, { color: theme.text, flex: 1 }]}>
+              {t('coachProfileLink') || 'Coach Profile — equipment, constraints & InBody data'}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={theme.text} />
+          </TouchableOpacity>
+        </View>
+
         {/* --- NEW COMMUNITY SECTION --- */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>
@@ -856,5 +1056,81 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     flexShrink: 1,
+  },
+  themedInputLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  themedButtonGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  themedButton: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  themedButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  themedInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+  },
+  apiKeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  apiKeyInput: {
+    flex: 1,
+  },
+  apiKeyEyeButton: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+  },
+  aiActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 15,
+  },
+  themedActionButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themedActionButtonOutline: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themedActionButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  testResultText: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 10,
+  },
+  coachProfileLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 15,
   },
 });

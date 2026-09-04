@@ -44,7 +44,7 @@ export default function WorkoutList({
       if (result.assets && result.assets[0]) {
         const fileUri = result.assets[0].uri;
         const jsonString = await FileSystem.readAsStringAsync(fileUri);
-        const success = await importWorkout(db, jsonString);
+        const { success } = await importWorkout(db, jsonString);
         if (success) {
           getWorkouts(); // Refresh the list
         }
@@ -81,6 +81,15 @@ export default function WorkoutList({
         >
           <Ionicons name="download-outline" size={25} color={theme.buttonText} />
         </TouchableOpacity>
+
+        {/* Generate Plan with AI Button */}
+        <TouchableOpacity
+          style={[styles.importButton, { backgroundColor: theme.buttonBackground }]}
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('GeneratePlan')}
+        >
+          <Ionicons name="sparkles-outline" size={25} color={theme.buttonText} />
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity
@@ -112,7 +121,7 @@ export default function WorkoutList({
           ]}
           activeOpacity={0.7}
           onLongPress={() => deleteWorkout(workout.workout_id, workout.workout_name)}
-          onPress={() => navigation.navigate('WorkoutDetails', { workout_id: workout.workout_id })}
+          onPress={() => navigation.navigate('WorkoutDetails', { mode: 'saved', workout_id: workout.workout_id })}
         >
           <View style={styles.workoutNameWrapper}>
             <Text style={[styles.workoutText, { color: theme.text }]}>{workout.workout_name}</Text>

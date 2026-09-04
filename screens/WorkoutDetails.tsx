@@ -1,6 +1,6 @@
 import { useFocusEffect } from '@react-navigation/native'; // Import useFocusEffect
-import React, { useState, useRef, useEffect } from 'react';
-import { View, ScrollView, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextInput, Animated, Linking, Keyboard, TouchableWithoutFeedback, StatusBar } from 'react-native'; // Import StatusBar
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { View, ScrollView, Text, StyleSheet, FlatList, TouchableOpacity, Alert, Modal, TextInput, Animated, Linking, Keyboard, TouchableWithoutFeedback, StatusBar, ActivityIndicator } from 'react-native'; // Import StatusBar
 import { useRoute, useNavigation } from '@react-navigation/native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -9,9 +9,17 @@ import { useTheme } from '../context/ThemeContext';
 import { WorkoutStackParamList } from '../App';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useTranslation } from 'react-i18next';
-import { exportWorkout } from '../utils/workoutSharingUtils';
+import { exportWorkout, importWorkout, ExportedWorkout, ExportedDay } from '../utils/workoutSharingUtils';
+import { refinePlan, getUserFacingErrorMessage } from '../utils/llmClient';
+import { loadSettings } from '../utils/settingsStorage';
+import { getLatestInBodySnapshot } from '../utils/inbodyStorage';
 
 type WorkoutListNavigationProp = StackNavigationProp<WorkoutStackParamList, 'WorkoutDetails'>;
+
+// A soft cap, not a hard one - warn past round 5, never block further rounds.
+const REFINEMENT_SOFT_CAP = 5;
+const HIGH_SETS_THRESHOLD = 15;
+const HIGH_REPS_THRESHOLD = 50;
 
 type Day = {
   day_id: number;
@@ -22,11 +30,18 @@ type Day = {
 export default function WorkoutDetails() {
   const db = useSQLiteContext();
   const route = useRoute();
- 
+
   const { theme } = useTheme();
   const { t } = useTranslation(); // Initialize translations
-  
-  const { workout_id } = route.params as { workout_id: number };
+
+  // route.params is read here, ONCE, for its initial value only. Draft mode never
+  // re-reads route.params after mount - every refinement round updates local state
+  // directly. Re-navigating to this same route with new params on each Refine would
+  // stack a back-history entry per round, making the back button step backward
+  // through old draft states instead of leaving the screen.
+  const initialParams = useRef(route.params as WorkoutStackParamList['WorkoutDetails']).current;
+  const isDraftMode = initialParams.mode === 'draft';
+  const workout_id = initialParams.mode === 'saved' ? initialParams.workout_id : -1;
 
   const [workoutName, setWorkoutName] = useState('');
   const [days, setDays] = useState<Day[]>([]);
@@ -48,14 +63,175 @@ export default function WorkoutDetails() {
   const navigation = useNavigation<WorkoutListNavigationProp>();
   const [isReordering, setIsReordering] = useState(false);
 
+  // --- Draft mode state ---
+  const [roundCount, setRoundCount] = useState(0);
+  const [refinementFeedback, setRefinementFeedback] = useState('');
+  const [isRefining, setIsRefining] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [previousDraft, setPreviousDraft] = useState<{ workoutName: string; days: Day[] } | null>(null);
+  // Set to true right before a programmatic navigation away that should NOT trigger
+  // the "discard draft?" confirmation (a successful Save, or the confirm dialog's own
+  // "discard" choice going through with goBack()).
+  const allowNavigationAway = useRef(false);
+  const syntheticIdCounter = useRef(0);
+
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Negative, decreasing IDs so a draft's synthetic day_id/exercise_id can never
+  // collide with a real DB-assigned (positive) id.
+  const nextSyntheticId = () => {
+    syntheticIdCounter.current -= 1;
+    return syntheticIdCounter.current;
+  };
+
+  const toLocalDays = (exportedDays: ExportedDay[]): Day[] =>
+    exportedDays.map((day) => ({
+      day_id: nextSyntheticId(),
+      day_name: day.day_name,
+      exercises: day.exercises.map((ex) => ({
+        exercise_id: nextSyntheticId(),
+        exercise_name: ex.exercise_name,
+        sets: ex.sets,
+        reps: ex.reps,
+        web_link: ex.web_link,
+        muscle_group: ex.muscle_group,
+        exercise_notes: ex.exercise_notes,
+      })),
+    }));
+
+  const toExportedWorkout = (): ExportedWorkout => ({
+    workout_name: workoutName,
+    days: days.map((day) => ({
+      day_name: day.day_name,
+      exercises: day.exercises.map((ex) => ({
+        exercise_name: ex.exercise_name,
+        sets: ex.sets,
+        reps: ex.reps,
+        web_link: ex.web_link,
+        muscle_group: ex.muscle_group,
+        exercise_notes: ex.exercise_notes,
+      })),
+    })),
+  });
+
+  // Seed local state from the draft ONCE on mount - not a dependency-driven effect,
+  // since initialParams itself never changes after mount.
+  useEffect(() => {
+    if (initialParams.mode === 'draft') {
+      setWorkoutName(initialParams.draftWorkout.workout_name);
+      setDays(toLocalDays(initialParams.draftWorkout.days));
+    }
+  }, []);
+
   useFocusEffect(
-    React.useCallback(() => {
-      fetchWorkoutDetails();
-    }, [workout_id])
+    useCallback(() => {
+      if (!isDraftMode) fetchWorkoutDetails();
+    }, [workout_id, isDraftMode])
   );
+
+  // Intercept back navigation while there's unsaved draft content, rather than
+  // letting a stray back-tap silently discard a generated (and possibly refined)
+  // plan with no confirmation.
+  useEffect(() => {
+    if (!isDraftMode) return;
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (allowNavigationAway.current) return;
+      e.preventDefault();
+      Alert.alert(
+        t('discardDraftTitle') || 'Discard this draft?',
+        t('discardDraftMessage') || 'This generated plan has not been saved. Leaving now will discard it.',
+        [
+          { text: t('Cancel') || 'Cancel', style: 'cancel' },
+          {
+            text: t('alertDelete') || 'Discard',
+            style: 'destructive',
+            onPress: () => {
+              allowNavigationAway.current = true;
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ]
+      );
+    });
+    return unsubscribe;
+  }, [navigation, isDraftMode]);
+
+  const handleRefine = async () => {
+    if (!refinementFeedback.trim()) return;
+    setIsRefining(true);
+    try {
+      const settings = await loadSettings();
+      const latestSnapshot = await getLatestInBodySnapshot();
+      const currentDraft = toExportedWorkout();
+
+      const refined = await refinePlan(currentDraft, refinementFeedback.trim(), {
+        equipment: settings?.equipmentList || [],
+        standingConstraints: settings?.standingConstraints || '',
+        latestInBody: latestSnapshot,
+      });
+
+      if (!isMounted.current) return;
+      setPreviousDraft({ workoutName, days });
+      setWorkoutName(refined.workout_name);
+      setDays(toLocalDays(refined.days));
+      setRoundCount((prev) => prev + 1);
+      setRefinementFeedback('');
+      setIsRefining(false);
+
+      if (roundCount + 1 >= REFINEMENT_SOFT_CAP) {
+        Alert.alert(
+          t('refinementSoftCapTitle') || `You've used ${REFINEMENT_SOFT_CAP} rounds`,
+          t('refinementSoftCapMessage') || 'Continue refining if you like - there is no hard limit, this is just a heads-up on API usage.'
+        );
+      }
+    } catch (error) {
+      if (!isMounted.current) return;
+      setIsRefining(false);
+      Alert.alert(t('refinementFailedTitle') || 'Refinement Failed', getUserFacingErrorMessage(error));
+    }
+  };
+
+  // Single-level undo - reverts to the pre-refine snapshot only, doesn't touch
+  // roundCount (that tracks API calls actually made, regardless of whether the
+  // result was kept).
+  const handleUndoRefine = () => {
+    if (!previousDraft) return;
+    setWorkoutName(previousDraft.workoutName);
+    setDays(previousDraft.days);
+    setPreviousDraft(null);
+  };
+
+  const handleSaveDraft = async () => {
+    if (!workoutName.trim()) {
+      Alert.alert(t('errorTitle'), t('workoutNameValidationError') || 'Please give this workout a name.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const exported = toExportedWorkout();
+      const result = await importWorkout(db, JSON.stringify(exported));
+      if (!isMounted.current) return;
+      setIsSaving(false);
+      if (result.success && result.workoutId) {
+        allowNavigationAway.current = true;
+        navigation.replace('WorkoutDetails', { mode: 'saved', workout_id: result.workoutId });
+      }
+      // On failure, importWorkout() has already shown its own alert (e.g. name
+      // collision) - the user stays on the draft to rename or try again.
+    } catch (error) {
+      if (!isMounted.current) return;
+      setIsSaving(false);
+      Alert.alert(t('errorTitle'), 'Failed to save workout.');
+    }
+  };
 
   const fetchWorkoutDetails = async () => {
     const workoutResult = await db.getAllAsync<{ workout_name: string }>(
@@ -638,26 +814,47 @@ export default function WorkoutDetails() {
       </TouchableOpacity>
 
       {/* Icon on the right */}
-      <TouchableOpacity
-        style={styles.editIcon}
-        onPress={() => navigation.navigate('EditWorkout', { workout_id: workout_id })}
-      >
-        <Ionicons name="pencil-outline" size={24} color={theme.text} />
-      </TouchableOpacity>
+      {!isDraftMode && (
+        <TouchableOpacity
+          style={styles.editIcon}
+          onPress={() => navigation.navigate('EditWorkout', { workout_id: workout_id })}
+        >
+          <Ionicons name="pencil-outline" size={24} color={theme.text} />
+        </TouchableOpacity>
+      )}
 
       <View style={styles.titleContainer}>
         {/* This View will stretch and center the text */}
         <View style={{ flex: 1, alignItems: 'center' }}>
-          <Text style={[styles.title, { color: theme.text }]}>{workoutName}</Text>
+          {isDraftMode ? (
+            <>
+              <View style={[styles.draftBadge, { backgroundColor: theme.buttonBackground }]}>
+                <Text style={[styles.draftBadgeText, { color: theme.buttonText }]}>
+                  {t('draftBadge') || 'DRAFT — not saved'}
+                </Text>
+              </View>
+              <TextInput
+                style={[styles.draftNameInput, { color: theme.text, borderColor: theme.border }]}
+                value={workoutName}
+                onChangeText={setWorkoutName}
+                placeholder={t('workoutNamePlaceholder')}
+                placeholderTextColor={theme.text}
+              />
+            </>
+          ) : (
+            <Text style={[styles.title, { color: theme.text }]}>{workoutName}</Text>
+          )}
         </View>
       </View>
 
-      <TouchableOpacity
-        style={styles.exportButton}
-        onPress={() => handleExportWorkout(workout_id)}
-      >
-        <Ionicons name="share-outline" size={28} color={theme.text} />
-      </TouchableOpacity>
+      {!isDraftMode && (
+        <TouchableOpacity
+          style={styles.exportButton}
+          onPress={() => handleExportWorkout(workout_id)}
+        >
+          <Ionicons name="share-outline" size={28} color={theme.text} />
+        </TouchableOpacity>
+      )}
 
       <FlatList
         data={days}
@@ -679,12 +876,12 @@ export default function WorkoutDetails() {
             ]}
           >
             <TouchableOpacity
-              onLongPress={() => handleDeleteDay(day.day_id, day.day_name, workout_id)}
-              activeOpacity={0.8}
+              onLongPress={isDraftMode ? undefined : () => handleDeleteDay(day.day_id, day.day_name, workout_id)}
+              activeOpacity={isDraftMode ? 1 : 0.8}
               style={[
-                styles.dayContainer, 
-                { 
-                  padding: 20, 
+                styles.dayContainer,
+                {
+                  padding: 20,
                 }
               ]}
             >
@@ -698,60 +895,64 @@ export default function WorkoutDetails() {
                 >
                   {day.day_name}
                 </AutoSizeText>
-                
-                <View style={styles.dayHeaderRightControls}>
-                  {/* Day reordering arrows */}
-                  <View style={styles.reorderButtonsContainer}>
-                    {index > 0 && (
-                      <TouchableOpacity
-                        onPress={() => !isReordering && moveDayUp(index)}
-                        disabled={isReordering}
-                        style={styles.reorderButton}
-                      >
-                        <Ionicons name="arrow-up" size={24} color={isReordering ? theme.border : theme.text} />
-                      </TouchableOpacity>
-                    )}
-                    {index < days.length - 1 && (
-                      <TouchableOpacity
-                        onPress={() => !isReordering && moveDayDown(index)}
-                        disabled={isReordering}
-                        style={styles.reorderButton}
-                      >
-                        <Ionicons name="arrow-down" size={24} color={isReordering ? theme.border : theme.text} />
-                      </TouchableOpacity>
-                    )}
+
+                {!isDraftMode && (
+                  <View style={styles.dayHeaderRightControls}>
+                    {/* Day reordering arrows */}
+                    <View style={styles.reorderButtonsContainer}>
+                      {index > 0 && (
+                        <TouchableOpacity
+                          onPress={() => !isReordering && moveDayUp(index)}
+                          disabled={isReordering}
+                          style={styles.reorderButton}
+                        >
+                          <Ionicons name="arrow-up" size={24} color={isReordering ? theme.border : theme.text} />
+                        </TouchableOpacity>
+                      )}
+                      {index < days.length - 1 && (
+                        <TouchableOpacity
+                          onPress={() => !isReordering && moveDayDown(index)}
+                          disabled={isReordering}
+                          style={styles.reorderButton}
+                        >
+                          <Ionicons name="arrow-down" size={24} color={isReordering ? theme.border : theme.text} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+
+                    {/* Add Exercise Button */}
+                    <TouchableOpacity
+                      onPress={() => openAddExerciseModal(day.day_id)}
+                      disabled={isReordering}
+                    >
+                      <Ionicons
+                        name="add"
+                        size={28}
+                        color={isReordering ? theme.border : theme.text}
+                      />
+                    </TouchableOpacity>
                   </View>
-                  
-                  {/* Add Exercise Button */}
-                  <TouchableOpacity 
-                    onPress={() => openAddExerciseModal(day.day_id)}
-                    disabled={isReordering}
-                  >
-                    <Ionicons 
-                      name="add" 
-                      size={28} 
-                      color={isReordering ? theme.border : theme.text} 
-                    />
-                  </TouchableOpacity>
-                </View>
+                )}
               </View>
 
               {/* Exercises */}
               {day.exercises.length > 0 ? (
                 day.exercises.map((exercise, index) => {
                   const muscleGroupInfo = muscleGroupData.find(mg => mg.value === exercise.muscle_group);
+                  const isUnusuallyHigh = isDraftMode && (exercise.sets > HIGH_SETS_THRESHOLD || exercise.reps > HIGH_REPS_THRESHOLD);
                   return (
                     <TouchableOpacity
                       key={index}
-                      onPress={() => openWebLinkModal(exercise)}
-                      onLongPress={() => handleDeleteExercise(day.day_id, exercise.exercise_name, workout_id)}
-                      activeOpacity={0.6}
+                      onPress={isDraftMode ? undefined : () => openWebLinkModal(exercise)}
+                      onLongPress={isDraftMode ? undefined : () => handleDeleteExercise(day.day_id, exercise.exercise_name, workout_id)}
+                      activeOpacity={isDraftMode ? 1 : 0.6}
                       delayLongPress={500}
                       style={[
-                        styles.exerciseContainer, 
-                        { 
-                          backgroundColor: theme.card, 
-                          borderColor: theme.border 
+                        styles.exerciseContainer,
+                        {
+                          backgroundColor: theme.card,
+                          borderColor: isUnusuallyHigh ? '#c62828' : theme.border,
+                          borderWidth: isUnusuallyHigh ? 1.5 : 0,
                         }
                       ]}
                     >
@@ -780,11 +981,16 @@ export default function WorkoutDetails() {
                         </View>
                       </View>
                       <View style={styles.exerciseDetails}>
-                        <Text style={{ color: theme.text, fontSize: 16, textAlign: 'right' }}>
-                          {exercise.sets} <Text style={{ color: theme.text }}>{t('Sets')}</Text>
+                        <Text style={{ color: isUnusuallyHigh ? '#c62828' : theme.text, fontSize: 16, textAlign: 'right', fontWeight: isUnusuallyHigh ? '800' : 'normal' }}>
+                          {exercise.sets} <Text>{t('Sets')}</Text>
                           {'  '}
-                          {exercise.reps} <Text style={{ color: theme.text }}>{t('Reps')}</Text>
+                          {exercise.reps} <Text>{t('Reps')}</Text>
                         </Text>
+                        {isUnusuallyHigh && (
+                          <Text style={{ color: '#c62828', fontSize: 11, textAlign: 'right', marginTop: 2 }}>
+                            {t('unusuallyHighWarning') || 'unusually high — double check'}
+                          </Text>
+                        )}
                       </View>
                     </TouchableOpacity>
                   )
@@ -796,18 +1002,69 @@ export default function WorkoutDetails() {
           </Animated.View>
         )}
         ListFooterComponent={
-          <>
-            <TouchableOpacity
-              style={[styles.addDayButton, { backgroundColor: theme.buttonBackground }]}
-              onPress={openAddDayModal}
-            >
-              <Ionicons name="add" size={28} color={theme.buttonText} />
-              <Text style={[styles.addDayButtonText, { color: theme.buttonText }]}>{t('addDayFromDetails')}</Text>
-            </TouchableOpacity>
-            <Text style={[styles.tipText, { color: theme.text }]}>
-              {t('workoutDetailsTip')}
-            </Text>
-          </>
+          isDraftMode ? (
+            <View style={styles.refinementStrip}>
+              <Text style={[styles.refinementRoundText, { color: theme.text }]}>
+                {t('refinementRoundCount', { count: roundCount }) || `Refinement rounds used: ${roundCount}`}
+              </Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  { color: theme.text, backgroundColor: theme.background, borderColor: theme.border, height: 80, textAlignVertical: 'top' },
+                ]}
+                placeholder={t('refinementFeedbackPlaceholder') || "What would you like to change? (e.g. 'add more back exercises', 'swap barbell squats for leg press')"}
+                placeholderTextColor={theme.text}
+                value={refinementFeedback}
+                onChangeText={setRefinementFeedback}
+                multiline
+                numberOfLines={3}
+              />
+              <TouchableOpacity
+                style={[styles.saveButton, { backgroundColor: theme.buttonBackground, opacity: refinementFeedback.trim() ? 1 : 0.5 }]}
+                onPress={handleRefine}
+                disabled={isRefining || !refinementFeedback.trim()}
+              >
+                {isRefining ? (
+                  <ActivityIndicator size="small" color={theme.buttonText} />
+                ) : (
+                  <Text style={[styles.saveButtonText, { color: theme.buttonText }]}>{t('refineButton') || 'Refine'}</Text>
+                )}
+              </TouchableOpacity>
+
+              {previousDraft && (
+                <TouchableOpacity style={styles.undoButton} onPress={handleUndoRefine}>
+                  <Text style={[styles.undoButtonText, { color: theme.text }]}>
+                    {t('undoLastRefinement') || 'Undo last refinement'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={[styles.saveButton, { backgroundColor: theme.buttonBackground, marginTop: 20 }]}
+                onPress={handleSaveDraft}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color={theme.buttonText} />
+                ) : (
+                  <Text style={[styles.saveButtonText, { color: theme.buttonText }]}>{t('saveWorkoutButton') || 'Save Workout'}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[styles.addDayButton, { backgroundColor: theme.buttonBackground }]}
+                onPress={openAddDayModal}
+              >
+                <Ionicons name="add" size={28} color={theme.buttonText} />
+                <Text style={[styles.addDayButtonText, { color: theme.buttonText }]}>{t('addDayFromDetails')}</Text>
+              </TouchableOpacity>
+              <Text style={[styles.tipText, { color: theme.text }]}>
+                {t('workoutDetailsTip')}
+              </Text>
+            </>
+          )
         }
         ListEmptyComponent={
           <Text style={[styles.emptyText, { color: theme.text }]}>
@@ -1255,5 +1512,45 @@ const styles = StyleSheet.create({
       marginRight: 10,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    draftBadge: {
+      borderRadius: 20,
+      paddingVertical: 4,
+      paddingHorizontal: 14,
+      marginBottom: 10,
+    },
+    draftBadgeText: {
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+    },
+    draftNameInput: {
+      fontSize: 28,
+      fontWeight: '900',
+      textAlign: 'center',
+      borderWidth: 1,
+      borderRadius: 10,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      width: '100%',
+    },
+    refinementStrip: {
+      marginTop: 10,
+      marginBottom: 20,
+    },
+    refinementRoundText: {
+      fontSize: 14,
+      fontWeight: '600',
+      marginBottom: 10,
+      textAlign: 'center',
+    },
+    undoButton: {
+      alignItems: 'center',
+      paddingVertical: 10,
+    },
+    undoButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
     },
   });

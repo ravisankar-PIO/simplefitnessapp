@@ -1,5 +1,10 @@
 import { type SQLiteDatabase } from 'expo-sqlite';
 
+// Migrations in this file run ad-hoc, invoked from whichever screen's mount effect
+// owns the table being changed (see screens/Workouts.tsx). Coach_Notes is the one
+// exception — it runs centrally from App.tsx's SQLiteProvider onInit instead, since
+// it has no single owning screen (see utils/coachNotesUtils.ts). Both patterns are
+// intentional; don't refactor one into the other.
 export const addWebLinkColumn = async (db: SQLiteDatabase) => {
     const tables = ['Exercises', 'Logged_Exercises'];
     try {

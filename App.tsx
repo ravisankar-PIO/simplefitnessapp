@@ -40,6 +40,9 @@
   import { checkAndSyncPermissions } from './utils/notificationUtils';
   import { AppState } from 'react-native';
   import GraphsWorkoutDetails from './screens/GraphsWorkoutDetails';
+  import { addCoachNotesTable } from './utils/coachNotesUtils';
+  import CoachProfile from './screens/CoachProfile';
+  import GeneratePlan from './screens/GeneratePlan';
 
 
 
@@ -49,6 +52,7 @@
   const WorkoutLogStackScreen= createNativeStackNavigator<WorkoutLogStackParamList>();
   const WeightLogStackScreen= createNativeStackNavigator<WeightLogStackParamList>();
   const StartWorkoutStackScreen = createNativeStackNavigator<StartWorkoutStackParamList>();
+  const SettingsStackScreen = createNativeStackNavigator<SettingsStackParamList>();
 
   
 
@@ -124,13 +128,19 @@
   export type WorkoutStackParamList = {
     WorkoutsList: undefined; // No parameters for this route
     CreateWorkout: undefined; // No parameters for this route
-    WorkoutDetails: { workout_id: number }; // Add this
+    // Saved mode loads from the DB by workout_id, same as always. Draft mode carries
+    // an in-memory ExportedWorkout from GeneratePlan - never a DB row - and WorkoutDetails
+    // must not re-read route.params after the initial mount (see draft-mode notes there).
+    WorkoutDetails:
+      | { mode: 'saved'; workout_id: number }
+      | { mode: 'draft'; draftWorkout: import('./utils/workoutSharingUtils').ExportedWorkout };
     EditWorkout: { workout_id: number }; // Only `workout_id` for editing a workout
     TemplateList: undefined;
     DifficultyList: undefined;
     Difficulty: undefined;
     Template: { workout_difficulty: string };
     TemplateDetails: { workout_id: number };
+    GeneratePlan: undefined;
   };
 
   export type WorkoutLogStackParamList = {
@@ -156,6 +166,11 @@
   export type StartWorkoutStackParamList = {
     StartWorkout: { fromNotification?: boolean } | undefined;
     StartedWorkoutInterface: { workout_log_id: number };
+  }
+
+  export type SettingsStackParamList = {
+    SettingsMain: undefined;
+    CoachProfile: undefined;
   }
 
   function WorkoutStack() {
@@ -201,6 +216,11 @@
           name='TemplateDetails'
           component={TemplateDetails}
           options={{title: 'TemplateDetails'}}
+          />
+        <WorkoutStackScreen.Screen
+          name='GeneratePlan'
+          component={GeneratePlan}
+          options={{ headerShown: false }}
           />
       </WorkoutStackScreen.Navigator>
       </SQLiteProvider>
@@ -304,6 +324,27 @@
     );
   }
 
+  function SettingsStack() {
+    return (
+      <SettingsStackScreen.Navigator
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        <SettingsStackScreen.Screen
+          name="SettingsMain"
+          component={Settings}
+          options={{ headerShown: false }}
+        />
+        <SettingsStackScreen.Screen
+          name="CoachProfile"
+          component={CoachProfile}
+          options={{ headerShown: false }}
+        />
+      </SettingsStackScreen.Navigator>
+    );
+  }
+
   /*function StartWorkoutStack() {
     return (
       <StartWorkoutStackScreen.Navigator
@@ -374,7 +415,15 @@ const AppContent = () => {
           </View>
         }
       />
-      <SQLiteProvider databaseName="SimpleDB.db" useSuspense>
+      {/*
+        Coach_Notes is the one migration in this app run centrally (via onInit)
+        instead of ad-hoc from a screen's mount effect, like every other migration
+        here (see utils/exerciseDetailUtils.ts, utils/addRecurringTable.ts). It has
+        no single owning screen — it's read by the today's-workout screen, which has
+        no reason to run migrations — so it's guaranteed to exist here instead.
+        Both patterns are intentional; don't refactor one into the other.
+      */}
+      <SQLiteProvider databaseName="SimpleDB.db" useSuspense onInit={addCoachNotesTable}>
         <RecurringWorkoutManager />
         
         <Bottom.Navigator
@@ -431,7 +480,7 @@ const AppContent = () => {
 
        <Bottom.Screen
          name="Settings"
-         component={Settings}
+         component={SettingsStack}
          options={{
            tabBarButton: (props) => (
              <TabButton {...props} iconName="settings-sharp" />

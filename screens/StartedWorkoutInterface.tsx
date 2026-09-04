@@ -29,14 +29,23 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useSettings } from '../context/SettingsContext';
 import { loadRestTimerPreferences, saveRestTimerPreferences } from '../utils/startedWorkoutPreferenceUtils';
 import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
-import { 
-  useTimerPersistence, 
-  createTimerState, 
-  updateTimerState, 
+import {
+  useTimerPersistence,
+  createTimerState,
+  updateTimerState,
   timerCalculations,
-  TimerState 
+  TimerState
 } from '../utils/timerPersistenceUtils';
 import { AutoSizeText, ResizeTextMode } from 'react-native-auto-size-text';
+import DifficultySelector from '../components/DifficultySelector';
+import WeightSuggestionBadge from '../components/WeightSuggestionBadge';
+import {
+    DifficultyLevel,
+    analyzeDifficultyAndSuggestWeight,
+    saveSuggestedWeight,
+    getSuggestedWeight,
+    DEFAULT_WEIGHT_INCREMENT
+} from '../utils/difficultyUtils';
 
 type StartedWorkoutRouteProps = RouteProp<
   StartWorkoutStackParamList,
@@ -67,6 +76,7 @@ interface ExerciseSet {
   web_link: string | null;
   muscle_group: string | null;
   exercise_notes: string | null;
+  comments: string;
 }
 
 export default function StartedWorkoutInterface() {
@@ -103,7 +113,11 @@ export default function StartedWorkoutInterface() {
   
   // Sets data for tracking workout
   const [allSets, setAllSets] = useState<ExerciseSet[]>([]);
-  
+
+  // State for "Add extra set" feature
+  const [isEditingExerciseName, setIsEditingExerciseName] = useState(false);
+  const [editableExerciseName, setEditableExerciseName] = useState('');
+
   // State for notes modal
   const [isNotesModalVisible, setIsNotesModalVisible] = useState(false);
   const [notesModalContent, setNotesModalContent] = useState('');
@@ -112,7 +126,19 @@ export default function StartedWorkoutInterface() {
   // Timer state using the new utility
   const [timerState, setTimerState] = useState<TimerState>(createTimerState());
   const [isCompletingSet, setIsCompletingSet] = useState(false);
-  
+
+  // Difficulty tracking states
+  const [currentDifficulty, setCurrentDifficulty] = useState<DifficultyLevel>(null);
+  const [showDifficultySelector, setShowDifficultySelector] = useState(false);
+  const [weightIncrement, setWeightIncrement] = useState(DEFAULT_WEIGHT_INCREMENT);
+  const [suggestedWeights, setSuggestedWeights] = useState<Map<number, number>>(new Map());
+  const [pendingSetData, setPendingSetData] = useState<{
+    weight: number;
+    reps: number;
+    setIndex: number;
+    isFinishWorkout?: boolean;
+  } | null>(null);
+
   // Timer refs for intervals
   const workoutTimerRef = useRef<NodeJS.Timeout | null>(null);
   const restTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -131,7 +157,228 @@ export default function StartedWorkoutInterface() {
       )
     );
   };
-  
+
+  // State for previous workout history
+  const [previousWorkoutHistory, setPreviousWorkoutHistory] = useState<Map<string, Array<{
+    setNumber: number;
+    reps: number;
+    weight: number;
+    difficulty: string | null;
+    workoutDate: number;
+    comments: string | null;
+  }>>>(new Map());
+
+  // Fetch suggested weights for exercises
+  const fetchSuggestedWeights = async (workoutData?: { workout_name: string; day_name: string }, exercisesList?: Exercise[]) => {
+    const workoutToUse = workoutData || workout;
+    const exercisesToUse = exercisesList || exercises;
+
+    if (!workoutToUse) return;
+
+    try {
+      const suggestions = new Map<number, number>();
+
+      for (const exercise of exercisesToUse) {
+        const suggested = await getSuggestedWeight(
+          db,
+          workoutToUse.workout_name,
+          workoutToUse.day_name,
+          exercise.exercise_name
+        );
+
+        if (suggested !== null) {
+          suggestions.set(exercise.logged_exercise_id, suggested);
+        }
+      }
+
+      setSuggestedWeights(suggestions);
+    } catch (error) {
+      console.error('Error fetching suggested weights:', error);
+    }
+  };
+
+  // Fetch previous workout history for an exercise
+  const fetchPreviousWorkoutHistory = async (exerciseName: string) => {
+    try {
+      const previousSets = await db.getAllAsync<{
+        set_number: number;
+        reps_logged: number;
+        weight_logged: number;
+        difficulty: string | null;
+        workout_date: number;
+        comments: string | null;
+      }>(
+        `SELECT wl.set_number, wl.reps_logged, wl.weight_logged, wl.difficulty, wl.comments, w.workout_date
+         FROM Weight_Log wl
+         JOIN Workout_Log w ON wl.workout_log_id = w.workout_log_id
+         WHERE wl.exercise_name = ?
+         AND wl.workout_log_id != ?
+         ORDER BY w.workout_date DESC, wl.set_number ASC
+         LIMIT 20`,
+        [exerciseName, workout_log_id]
+      );
+
+      if (previousSets.length > 0) {
+        // Group by workout (same workout_date)
+        const mostRecentDate = previousSets[0].workout_date;
+        const mostRecentSets = previousSets.filter(s => s.workout_date === mostRecentDate);
+
+        return mostRecentSets.map(set => ({
+          setNumber: set.set_number,
+          reps: set.reps_logged,
+          weight: set.weight_logged,
+          difficulty: set.difficulty || 'Medium',
+          workoutDate: set.workout_date,
+          comments: set.comments || null,
+        }));
+      }
+
+      return [];
+    } catch (error) {
+      console.error('Error fetching previous workout history:', error);
+      return [];
+    }
+  };
+
+  // Handle difficulty selection
+  const handleDifficultySelected = async (difficulty: DifficultyLevel) => {
+    setShowDifficultySelector(false);
+
+    if (!difficulty || !pendingSetData) return;
+
+    setCurrentDifficulty(difficulty);
+
+    // Check if this is a finish workout scenario
+    if (pendingSetData.isFinishWorkout) {
+      // Complete the last set with difficulty, then finish workout
+      await completeSetWithDifficulty(difficulty, pendingSetData, true);
+    } else {
+      // Normal set completion
+      await completeSetWithDifficulty(difficulty, pendingSetData);
+    }
+
+    // Clear pending data
+    setPendingSetData(null);
+  };
+
+  // Complete set with difficulty tracking
+  const completeSetWithDifficulty = async (difficulty: DifficultyLevel, setData: { weight: number; reps: number; setIndex: number }, isFinishingWorkout: boolean = false) => {
+    const currentSet = allSets[setData.setIndex];
+
+    try {
+      // Insert into Weight_Log with difficulty and comments
+      await db.runAsync(
+        `INSERT INTO Weight_Log (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty, comments)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [
+          workout_log_id,
+          currentSet.exercise_id,
+          currentSet.exercise_name,
+          currentSet.set_number,
+          setData.weight,
+          setData.reps,
+          currentSet.muscle_group,
+          difficulty,
+          currentSet.comments || ''
+        ]
+      );
+
+      // Mark set as logged in UI
+      const updatedSets = [...allSets];
+      updatedSets[setData.setIndex] = { ...currentSet, set_logged: true, reps_done: setData.reps.toString(), weight: setData.weight.toString() };
+      setAllSets(updatedSets);
+      updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
+
+      // Reset exercise name editing mode after completing a set
+      setIsEditingExerciseName(false);
+
+      // Check if this was the last set of the exercise
+      const exerciseSets = updatedSets.filter(s => s.exercise_id === currentSet.exercise_id);
+      const allExerciseSetsLogged = exerciseSets.every(s => s.set_logged);
+
+      if (allExerciseSetsLogged) {
+        // Analyze difficulty and suggest weight for next time
+        const suggestedWeight = await analyzeDifficultyAndSuggestWeight(
+          db,
+          workout_log_id,
+          currentSet.exercise_id,
+          weightIncrement
+        );
+
+        if (suggestedWeight !== null) {
+          await saveSuggestedWeight(db, currentSet.exercise_id, suggestedWeight);
+          // Note: Alert removed as per Requirement #3
+        }
+      }
+
+      // Vibrate for feedback
+      if (enableVibration) {
+        Vibration.vibrate(100);
+      }
+
+      // If this is the finish workout scenario, complete the workout now
+      if (isFinishingWorkout) {
+        setIsCompletingSet(false);
+        stopWorkoutTimer();
+        setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
+        return;
+      }
+
+      // Find next unlogged set
+      const findNextUnloggedSet = (startIndex: number) => {
+        for (let i = startIndex; i < updatedSets.length; i++) {
+          if (!updatedSets[i].set_logged) {
+            return i;
+          }
+        }
+        return -1;
+      };
+
+      let nextSetIndex = findNextUnloggedSet(setData.setIndex + 1);
+
+      if (nextSetIndex !== -1) {
+        const differentExercise = isDifferentExercise(setData.setIndex, nextSetIndex);
+
+        setTimerState(prev => updateTimerState(prev, {
+          workoutStage: 'rest',
+          isExerciseRest: differentExercise,
+          currentSetIndex: nextSetIndex
+        }));
+
+        const restSeconds = differentExercise
+          ? parseInt(exerciseRestTime)
+          : parseInt(restTime);
+
+        setIsCompletingSet(false);
+
+        if (restSeconds > 0) {
+          setTimerState(prev => updateTimerState(prev, {
+            isResting: true,
+            restRemaining: restSeconds,
+            restStartTime: Date.now()
+          }));
+
+          stopRestTimer();
+          startRestTimer(restSeconds);
+        } else {
+          setTimerState(prev => updateTimerState(prev, {
+            workoutStage: 'exercise',
+            currentSetIndex: nextSetIndex
+          }));
+        }
+      } else {
+        // No more sets - workout complete
+        setIsCompletingSet(false);
+        stopWorkoutTimer();
+        setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
+      }
+    } catch (error) {
+      console.error('Error completing set:', error);
+      Alert.alert(t('errorTitle') || 'Error', t('errorLoggingSet') || 'Failed to log set. Please try again.');
+      setIsCompletingSet(false);
+    }
+  };
+
   // Handle timer restoration from background
   const handleTimerRestore = (savedState: TimerState, elapsedSeconds: number) => {
     console.log('=== RESTORING TIMER STATE ===');
@@ -472,14 +719,29 @@ export default function StartedWorkoutInterface() {
               set_logged: false,
               web_link: exercise.web_link || null,
               muscle_group: exercise.muscle_group || null,
-              exercise_notes: exercise.exercise_notes || null
+              exercise_notes: exercise.exercise_notes || null,
+              comments: ''
             });
           }
         });
         
         setAllSets(setsData);
+
+        // Fetch suggested weights for exercises
+        const exercisesWithStatus = exercisesResult.map(e => ({ ...e, exercise_fully_logged: false }));
+        await fetchSuggestedWeights(workoutResult[0], exercisesWithStatus);
+
+        // Fetch previous workout history for each exercise
+        const historyMap = new Map();
+        for (const exercise of exercisesResult) {
+          const history = await fetchPreviousWorkoutHistory(exercise.exercise_name);
+          if (history.length > 0) {
+            historyMap.set(exercise.exercise_name, history);
+          }
+        }
+        setPreviousWorkoutHistory(historyMap);
       }
-      
+
       setLoading(false);
     } catch (error) {
       console.error('Error fetching workout details:', error);
@@ -930,9 +1192,54 @@ export default function StartedWorkoutInterface() {
         </View>
         
         <View style={[styles.currentExerciseCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text style={[styles.currentExerciseName, { color: theme.text }]}>
-            {currentSet.exercise_name}
-          </Text>
+          {isEditingExerciseName ? (
+            <TextInput
+              style={[styles.currentExerciseNameInput, {
+                color: theme.text,
+                backgroundColor: theme.background,
+                borderColor: theme.border
+              }]}
+              value={editableExerciseName}
+              onChangeText={(text) => {
+                setEditableExerciseName(text);
+                // Update the exercise name in allSets
+                const updatedSets = [...allSets];
+                updatedSets[timerState.currentSetIndex] = {
+                  ...updatedSets[timerState.currentSetIndex],
+                  exercise_name: text
+                };
+                setAllSets(updatedSets);
+              }}
+              onBlur={() => {
+                // Keep editing mode active if user clicks away
+                // They can manually disable it or it resets on set completion
+              }}
+              autoFocus={true}
+            />
+          ) : (
+            <Text style={[styles.currentExerciseName, { color: theme.text }]}>
+              {currentSet.exercise_name}
+            </Text>
+          )}
+
+          {/* Exercise Notes - Always Visible */}
+          {currentSet.exercise_notes && (
+            <View style={[styles.exerciseNotesContainer, { backgroundColor: theme.background, borderColor: theme.border }]}>
+              <Text style={[styles.exerciseNotesText, { color: theme.text }]}>
+                {currentSet.exercise_notes}
+              </Text>
+            </View>
+          )}
+
+          {/* Suggested Weight Badge */}
+          {suggestedWeights.has(currentSet.exercise_id) && (
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
+              <WeightSuggestionBadge
+                suggestedWeight={suggestedWeights.get(currentSet.exercise_id)!}
+                onIncrementChange={setWeightIncrement}
+              />
+            </View>
+          )}
 
           <View style={styles.badgeAndIconsContainer}>
             {muscleGroupInfo && muscleGroupInfo.value && (
@@ -963,9 +1270,32 @@ export default function StartedWorkoutInterface() {
           
           <View style={styles.inputContainer}>
             <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, { color: theme.text }]}> {t('Weight')} ({weightFormat})</Text>
+              <TextInput
+                style={[styles.input, {
+                  backgroundColor: theme.card,
+                  color: theme.text,
+                  borderColor: theme.border
+                }]}
+                value={currentSet.weight}
+                onChangeText={(text) => {
+                  const updatedSets = [...allSets];
+                  updatedSets[timerState.currentSetIndex] = {
+                    ...updatedSets[timerState.currentSetIndex],
+                    weight: text
+                  };
+                  setAllSets(updatedSets);
+                }}
+                keyboardType="numeric"
+                placeholder="0.0"
+                placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: theme.text }]}>{t('repsDone')}</Text>
               <TextInput
-                  style={[styles.input, { 
+                  style={[styles.input, {
                   backgroundColor: theme.card,
               color: theme.text,
               borderColor: theme.border
@@ -981,142 +1311,88 @@ export default function StartedWorkoutInterface() {
             }}
             keyboardType="number-pad"
             maxLength={4}
-            placeholder={"> 0"}
+            placeholder="0"
             placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
           />
             </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: theme.text }]}> {t('Weight')} ({weightFormat})</Text>
-              <TextInput
-                style={[styles.input, { 
-                  backgroundColor: theme.card,
-                  color: theme.text,
-                  borderColor: theme.border
-                }]}
-                value={currentSet.weight}
-                onChangeText={(text) => {
+          </View>
 
-
-
-                  const updatedSets = [...allSets];
-                  updatedSets[timerState.currentSetIndex] = {
-                    ...updatedSets[timerState.currentSetIndex],
-                    weight: text
-                  };
-                  setAllSets(updatedSets);
-                }}
-                keyboardType="decimal-pad"
-                placeholder="> 0.0"
-                placeholderTextColor={theme.type === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'}
-              />
-            </View>
+          <View style={styles.commentsContainer}>
+            <Text style={[styles.inputLabel, { color: theme.text }]}>{t('Comments')} ({t('optional')})</Text>
+            <TextInput
+              style={[styles.commentsInput, {
+                backgroundColor: theme.card,
+                color: theme.text,
+                borderColor: theme.border
+              }]}
+              value={currentSet.comments}
+              onChangeText={(text) => {
+                const updatedSets = [...allSets];
+                updatedSets[timerState.currentSetIndex] = {
+                  ...updatedSets[timerState.currentSetIndex],
+                  comments: text
+                };
+                setAllSets(updatedSets);
+              }}
+              maxLength={500}
+              multiline
+              numberOfLines={2}
+            />
           </View>
         </View>
         
         <View style={styles.controlsContainer}>
-            {!isLastStructuralSet &&
             <TouchableOpacity
-                style={[styles.completeButton, { 
-                backgroundColor: 
-                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === '' || parseFloat(allSets[timerState.currentSetIndex].weight) <= 0
-                    ? theme.inactivetint 
+                style={[styles.completeButton, {
+                backgroundColor:
+                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === ''
+                    ? theme.inactivetint
                     : theme.buttonBackground
                 }]}
                 onPress={() => {
                 const pressCurrentSet = allSets[timerState.currentSetIndex];
-                if (!pressCurrentSet || pressCurrentSet.reps_done === '' || parseInt(pressCurrentSet.reps_done) <= 0 || pressCurrentSet.weight === '' || parseFloat(pressCurrentSet.weight) <= 0) {
+                if (!pressCurrentSet || pressCurrentSet.reps_done === '' || parseInt(pressCurrentSet.reps_done) <= 0 || pressCurrentSet.weight === '') {
                     Alert.alert(t('missingInformation'), t('enterRepsAndWeight'));
                     return;
                 }
-                
-                setIsCompletingSet(true);
 
-                const updatedSets = [...allSets];
-                const currentSetIndex = timerState.currentSetIndex;
-                const currentSet = { ...updatedSets[currentSetIndex], set_logged: true };
-                updatedSets[currentSetIndex] = currentSet;
-                
-                setAllSets(updatedSets);
-                updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
-                
-                const findNextUnloggedSet = (startIndex: number) => {
-                    for (let i = startIndex; i < updatedSets.length; i++) {
-                    if (!updatedSets[i].set_logged) {
-                        return i;
-                    }
-                    }
-                    return -1;
-                };
+                const weight = parseFloat(pressCurrentSet.weight);
+                const reps = parseInt(pressCurrentSet.reps_done);
 
-                let nextSetIndex = findNextUnloggedSet(currentSetIndex + 1);
-
-                if (nextSetIndex !== -1) {
-                    const differentExercise = isDifferentExercise(currentSetIndex, nextSetIndex);
-                    
-                    setTimerState(prev => updateTimerState(prev, {
-                    workoutStage: 'rest',
-                    isExerciseRest: differentExercise,
-                    currentSetIndex: nextSetIndex 
-                    }));
-                    
-                    const restSeconds = differentExercise 
-                    ? parseInt(exerciseRestTime) 
-                    : parseInt(restTime);
-                    
-                    setIsCompletingSet(false);
-                    startRestTimer(restSeconds);
-                    
-                } else {
-                    // No more unlogged sets after current one
-                    const anyUnlogged = updatedSets.some(s => !s.set_logged);
-                    if (anyUnlogged) {
-                    Alert.alert(
-                        t('unsavedSetsTitle'),
-                        t('unsavedSetsMessage'),
-                        [
-                        {
-                            text: t('Yes'),
-                            style: 'destructive',
-                            onPress: () => {
-                            setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
-                            stopWorkoutTimer();
-                            },
-                        },
-                        {
-                            text: t('No'),
-                            style: 'cancel',
-                            onPress: () => {
-                            const firstUnloggedIndex = findNextUnloggedSet(0);
-                            if (firstUnloggedIndex !== -1) {
-                                setTimerState(prev => updateTimerState(prev, {
-                                workoutStage: 'exercise',
-                                currentSetIndex: firstUnloggedIndex
-                                }));
-                            }
-                            setIsCompletingSet(false);
-                            },
-                        },
-                        ],
-                        { onDismiss: () => setIsCompletingSet(false) }
-                    );
-                    } else {
-                    // All sets are logged
-                    setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
-                    stopWorkoutTimer();
-                    }
+                if (isNaN(weight) || isNaN(reps) || reps <= 0) {
+                    Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
+                    return;
                 }
+
+                // Store pending set data and show difficulty selector
+                setPendingSetData({
+                    weight,
+                    reps,
+                    setIndex: timerState.currentSetIndex
+                });
+                setIsCompletingSet(true);
+                setShowDifficultySelector(true);
                 }}
                 disabled={
                     isCompletingSet ||
-                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === '' || parseFloat(allSets[timerState.currentSetIndex].weight) <= 0
+                    !allSets[timerState.currentSetIndex] || allSets[timerState.currentSetIndex].reps_done === '' || parseInt(allSets[timerState.currentSetIndex].reps_done) <= 0 || allSets[timerState.currentSetIndex].weight === ''
                 }
             >
                 <Text style={[styles.buttonText, { color: theme.buttonText }]}>
-                {isCompletingSet ? `${t('completing')}...` : (isLastUnloggedSet ? t('finishWorkout') : t('completeSet'))}
+                {isCompletingSet ? `${t('completing')}...` : t('completeSet')}
                 </Text>
             </TouchableOpacity>
-            }
+
+            {/* Add Extra Set Button */}
+            <TouchableOpacity
+              style={[styles.addExtraSetButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={handleAddExtraSet}
+            >
+              <Text style={[styles.addExtraSetButtonText, { color: theme.text }]}>
+                + Add Extra Set
+              </Text>
+            </TouchableOpacity>
+
             <View style={styles.secondaryControlsContainer}>
                 {!isLastExercise &&
                   <TouchableOpacity
@@ -1171,6 +1447,38 @@ export default function StartedWorkoutInterface() {
           </View>
         </View>
         <Text style={[styles.tipText, { color: theme.text }]}>{t('startedWorkoutTip')}</Text>
+
+        {/* Previous Workout History */}
+        {previousWorkoutHistory.has(currentSet.exercise_name) && (
+          <View style={[styles.historyCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text style={[styles.historyTitle, { color: theme.text }]}>
+              📊 {t('previousWorkout') || 'Previous Workout'}
+            </Text>
+            <ScrollView
+              style={styles.historyScrollView}
+              nestedScrollEnabled={true}
+            >
+              {previousWorkoutHistory.get(currentSet.exercise_name)!.map((historySet, index) => {
+                const difficultyEmoji =
+                  historySet.difficulty === 'Easy' ? '😊' :
+                  historySet.difficulty === 'Hard' ? '😓' : '😐';
+
+                return (
+                  <View key={index} style={[styles.historySetRow, { borderBottomColor: theme.border }]}>
+                    <Text style={[styles.historySetText, { color: theme.text }]}>
+                      Set {historySet.setNumber}: {historySet.weight} {weightFormat} × {historySet.reps} reps {difficultyEmoji}
+                    </Text>
+                    {historySet.comments && (
+                      <Text style={[styles.historyCommentText, { color: theme.text }]}>
+                        💬 {historySet.comments}
+                      </Text>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
       </View>
     );
   };
@@ -1278,52 +1586,24 @@ export default function StartedWorkoutInterface() {
     const saveWorkout = async () => {
       try {
         console.log('Starting workout save process...');
-        
-        await db.runAsync('BEGIN TRANSACTION;');
-        
+
         console.log('Saving completion time to Workout_Log:', timerState.workoutDuration);
         await db.runAsync(
-          `UPDATE Workout_Log 
-           SET completion_time = ? 
+          `UPDATE Workout_Log
+           SET completion_time = ?
            WHERE workout_log_id = ?;`,
           [timerState.workoutDuration, workout_log_id]
         );
-        
-        console.log('Saving completed sets:', loggedSets.length);
-        for (let i = 0; i < loggedSets.length; i++) {
-          const set = loggedSets[i];
-          await db.runAsync(
-            `INSERT INTO Weight_Log (
-              workout_log_id, 
-              logged_exercise_id, 
-              exercise_name, 
-              set_number, 
-              weight_logged, 
-              reps_logged,
-              muscle_group
-            ) VALUES (?, ?, ?, ?, ?, ?, ?);`,
-            [
-              workout_log_id,
-              set.exercise_id,
-              set.exercise_name,
-              set.set_number,
-              parseFloat(set.weight),
-              parseInt(set.reps_done),
-              set.muscle_group
-            ]
-          );
-        }
-        
-        await db.runAsync('COMMIT;');
+
         console.log('Workout save completed successfully!');
-        
+        console.log('Note: Sets were already saved with difficulty tracking during workout');
+
         Alert.alert(
           t('workoutSaved'),
           t('workoutSavedMessage'),
           [{ text: t('OK'), onPress: () => navigation.goBack() }]
         );
       } catch (error) {
-        await db.runAsync('ROLLBACK;');
         console.error('Error saving workout:', error);
         Alert.alert(
           'Error',
@@ -1638,19 +1918,74 @@ export default function StartedWorkoutInterface() {
         Alert.alert(t('noMoreExercises'), t('allFollowingExercisesLogged'));
     }
   };
+
+  const handleAddExtraSet = () => {
+    const currentSet = allSets[timerState.currentSetIndex];
+    if (!currentSet) return;
+
+    // Find the highest set number for the current exercise
+    const setsForExercise = allSets.filter(s => s.exercise_name === currentSet.exercise_name);
+    const maxSetNumber = Math.max(...setsForExercise.map(s => s.set_number), 0);
+
+    // Create new extra set
+    const newSet: ExerciseSet = {
+      exercise_name: currentSet.exercise_name,
+      exercise_id: currentSet.exercise_id,
+      set_number: maxSetNumber + 1,
+      total_sets: maxSetNumber + 1,
+      reps_goal: currentSet.reps_goal,
+      reps_done: currentSet.reps_done, // Pre-fill with current reps
+      weight: currentSet.weight, // Pre-fill with current weight
+      set_logged: false,
+      web_link: currentSet.web_link,
+      muscle_group: currentSet.muscle_group,
+      exercise_notes: currentSet.exercise_notes,
+      comments: '',
+    };
+
+    // Insert new set after current set
+    const newAllSets = [...allSets];
+    newAllSets.splice(timerState.currentSetIndex + 1, 0, newSet);
+    setAllSets(newAllSets);
+
+    // Move to the new set
+    setTimerState(prev => ({
+      ...prev,
+      currentSetIndex: timerState.currentSetIndex + 1,
+    }));
+
+    // Enable exercise name editing
+    setIsEditingExerciseName(true);
+    setEditableExerciseName(currentSet.exercise_name);
+  };
+
   const handleFinishWorkout = () => {
     const currentSetIndex = timerState.currentSetIndex;
     const currentSet = allSets[currentSetIndex];
 
-    if (currentSet && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '' && parseFloat(currentSet.weight) > 0) {
-      const updatedSets = [...allSets];
-      updatedSets[currentSetIndex] = { ...currentSet, set_logged: true };
-      setAllSets(updatedSets);
-      updateExerciseLoggedStatus(currentSet.exercise_id, updatedSets);
+    // Check if the current set has valid data and hasn't been logged
+    if (currentSet && !currentSet.set_logged && currentSet.reps_done !== '' && parseInt(currentSet.reps_done) > 0 && currentSet.weight !== '') {
+      const weight = parseFloat(currentSet.weight);
+      const reps = parseInt(currentSet.reps_done);
+
+      if (isNaN(weight) || isNaN(reps) || reps <= 0) {
+        Alert.alert(t('errorTitle') || 'Error', t('invalidWeightReps') || 'Please enter valid weight and reps');
+        return;
+      }
+
+      // Store pending set data and show difficulty selector
+      setPendingSetData({
+        weight,
+        reps,
+        setIndex: currentSetIndex,
+        isFinishWorkout: true,
+      });
+      setShowDifficultySelector(true);
+    } else {
+      // No valid current set to log, just finish
+      stopWorkoutTimer();
+      setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
     }
-    
-    stopWorkoutTimer();
-    setTimerState(prev => updateTimerState(prev, { workoutStage: 'completed' }));
   };
   
   if (loading) {
@@ -1703,6 +2038,17 @@ export default function StartedWorkoutInterface() {
       </ScrollView>
       {renderExerciseListModal()}
       {renderNotesModal()}
+
+      {/* Difficulty Selector Modal */}
+      <DifficultySelector
+        visible={showDifficultySelector}
+        onSelect={handleDifficultySelected}
+        onClose={() => {
+          setShowDifficultySelector(false);
+          setIsCompletingSet(false);
+          setPendingSetData(null);
+        }}
+      />
     </View>
   );
 }
@@ -1902,6 +2248,28 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  currentExerciseNameInput: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  exerciseNotesContainer: {
+    marginTop: 12,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  exerciseNotesText: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
   setInfo: {
     fontSize: 18,
     textAlign: 'center',
@@ -1919,6 +2287,19 @@ const styles = StyleSheet.create({
   },
   inputGroup: {
     width: '48%',
+  },
+  commentsContainer: {
+    marginTop: 15,
+    width: '100%',
+  },
+  commentsInput: {
+    height: 60,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    fontSize: 16,
+    textAlignVertical: 'top',
   },
   inputLabel: {
     fontSize: 14,
@@ -1940,6 +2321,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 15,
     paddingVertical: 15,
+  },
+  addExtraSetButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 10,
+    borderWidth: 1,
+  },
+  addExtraSetButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   progressContainer: {
     marginBottom: 20,
@@ -2198,5 +2591,35 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
+  },
+  historyCard: {
+    marginTop: 20,
+    marginHorizontal: 20,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    maxHeight: 200,
+  },
+  historyTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  historyScrollView: {
+    maxHeight: 150,
+  },
+  historySetRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  historySetText: {
+    fontSize: 14,
+  },
+  historyCommentText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginTop: 4,
+    marginLeft: 8,
+    opacity: 0.8,
   },
 });

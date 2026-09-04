@@ -12,6 +12,9 @@ import { useTranslation } from 'react-i18next';
 import { addWebLinkColumn } from '../utils/exerciseDetailUtils';
 import { addMuscleGroupColumn } from '../utils/exerciseDetailUtils';
 import { addExerciseNotesColumn } from '../utils/exerciseDetailUtils';
+import { addDifficultyColumn } from '../utils/exerciseDetailUtils';
+import { addSuggestedWeightColumn } from '../utils/exerciseDetailUtils';
+import { addCommentsColumn } from '../utils/exerciseDetailUtils';
 
 
 
@@ -31,6 +34,9 @@ export default function Workouts() {
         await addWebLinkColumn(db);
         await addMuscleGroupColumn(db);
         await addExerciseNotesColumn(db);
+        await addDifficultyColumn(db);
+        await addSuggestedWeightColumn(db);
+        await addCommentsColumn(db);
         db.withTransactionAsync(getWorkouts);
       };
       addWebLinkColumntoworkouts();

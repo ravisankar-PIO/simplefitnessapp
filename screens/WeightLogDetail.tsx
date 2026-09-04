@@ -18,10 +18,12 @@ import { useSQLiteContext } from 'expo-sqlite';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useSettings } from '../context/SettingsContext';
-import { useTheme } from '../context/ThemeContext'; 
+import { useTheme } from '../context/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import { AutoSizeText, ResizeTextMode } from 'react-native-auto-size-text';
 import deepCopy from '../utils/deepCopy';
+import DifficultySelector from '../components/DifficultySelector';
+import { DifficultyLevel } from '../utils/difficultyUtils';
 
 interface EditExerciseMetadata {
     exerciseName: string;
@@ -31,11 +33,13 @@ interface EditExerciseMetadata {
 
 interface ExerciseLog {
     weight_log_id: number;
-    weight_logged: string; 
+    weight_logged: string;
     reps_logged: string;
-    set_number: number; 
-    workout_date: number; 
-    day_name: string 
+    set_number: number;
+    workout_date: number;
+    day_name: string;
+    difficulty: string | null;
+    comments: string | null;
 }
 
 export default function WeightLogDetail() {
@@ -77,13 +81,23 @@ export default function WeightLogDetail() {
     logged_exercise_id: -1
   });
   const [editExerciseData, setEditExerciseData] = useState<ExerciseLog[]>([]);
-  const updateExerciseWeightLog = (item: ExerciseLog,
-                                  val: string, 
-                                  updatedKeyName: 'weight_logged' | 'reps_logged',
-                                  index: number) => {
-    item[updatedKeyName] = val;  
+  const [difficultyModalIndex, setDifficultyModalIndex] = useState<number | null>(null);
 
+  const updateExerciseWeightLog = (item: ExerciseLog,
+                                  val: string,
+                                  updatedKeyName: 'weight_logged' | 'reps_logged' | 'comments',
+                                  index: number) => {
+    item[updatedKeyName] = val;
     setEditExerciseData(prev => prev.map((value, i) => i === index ? item : value))
+  }
+
+  const handleDifficultySelect = (selectedDifficulty: DifficultyLevel) => {
+    if (difficultyModalIndex !== null && selectedDifficulty) {
+      const updatedData = [...editExerciseData];
+      updatedData[difficultyModalIndex].difficulty = selectedDifficulty;
+      setEditExerciseData(updatedData);
+    }
+    setDifficultyModalIndex(null);
   }
 
 
@@ -171,10 +185,12 @@ export default function WeightLogDetail() {
         day_name: string;
         logged_exercise_id: number;
         muscle_group: string | null;
+        difficulty: string | null;
+        comments: string | null;
       }>(
-        `SELECT Weight_Log.exercise_name, Weight_Log.weight_log_id, Weight_Log.weight_logged, Weight_Log.reps_logged, 
-        Weight_Log.set_number, Workout_Log.workout_date, Workout_Log.day_name, 
-        Weight_Log.logged_exercise_id, Weight_Log.muscle_group
+        `SELECT Weight_Log.exercise_name, Weight_Log.weight_log_id, Weight_Log.weight_logged, Weight_Log.reps_logged,
+        Weight_Log.set_number, Workout_Log.workout_date, Workout_Log.day_name,
+        Weight_Log.logged_exercise_id, Weight_Log.muscle_group, Weight_Log.difficulty, Weight_Log.comments
         FROM Weight_Log
         INNER JOIN Workout_Log ON Weight_Log.workout_log_id = Workout_Log.workout_log_id
         WHERE Workout_Log.day_name = ? AND Workout_Log.workout_date = ? AND Workout_Log.workout_name = ?
@@ -366,8 +382,8 @@ export default function WeightLogDetail() {
         return;
       }
 
-      const loggedWeight = parseInt(item.weight_logged);
-      if (Number.isNaN(loggedWeight) || loggedWeight === 0) {
+      const loggedWeight = parseFloat(item.weight_logged);
+      if (Number.isNaN(loggedWeight)) {
         Alert.alert(t('savingError'), t('weightsValidationError'));
         return;
       }
@@ -377,8 +393,8 @@ export default function WeightLogDetail() {
       }
 
       await db.runAsync(
-        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ? WHERE weight_log_id = ?',
-        [loggedWeight, loggedReps, item.weight_log_id]
+        'UPDATE Weight_Log SET weight_logged = ?, reps_logged = ?, difficulty = ?, comments = ? WHERE weight_log_id = ?',
+        [loggedWeight, loggedReps, item.difficulty || 'Medium', item.comments || '', item.weight_log_id]
       );
     }
 
@@ -518,14 +534,27 @@ export default function WeightLogDetail() {
                           </View>
                         )}
                         </View>
-                        {sets.map((set, index) => (
-                          <Text
-                            key={index}
-                            style={[styles.logDetail, { color: theme.text }]}
-                          >
-                            {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}
-                          </Text>
-                        ))}
+                        {sets.map((set, index) => {
+                          const difficultyEmoji =
+                            set.difficulty === 'Easy' ? ' 😊' :
+                            set.difficulty === 'Hard' ? ' 😓' :
+                            set.difficulty === 'Medium' ? ' 😐' : '';
+
+                          return (
+                            <View key={index}>
+                              <Text
+                                style={[styles.logDetail, { color: theme.text }]}
+                              >
+                                {t('Set')} {set.set_number}: {set.weight_logged} {weightFormat} × {set.reps_logged} {t('Reps')}{difficultyEmoji}
+                              </Text>
+                              {set.comments && (
+                                <Text style={[styles.logComment, { color: theme.text }]}>
+                                  💬 {set.comments}
+                                </Text>
+                              )}
+                            </View>
+                          );
+                        })}
                       </View>
                     </TouchableOpacity>
                   </View>
@@ -647,7 +676,7 @@ export default function WeightLogDetail() {
                         <Text style={[styles.inputLabel, { color: theme.text, marginTop: 15 }]}>{weightFormat}</Text>
                         <TextInput
                           style={[styles.input, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
-                          placeholder={t('Weight') + ' (> 0)'}
+                          placeholder={t('Weight')}
                           placeholderTextColor={theme.text}
                           keyboardType="numeric"
                           value={item['weight_logged'].toString()}
@@ -656,11 +685,33 @@ export default function WeightLogDetail() {
                         <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>{t('repsPlaceholder')}</Text>
                         <TextInput
                           style={[styles.input, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
-                          placeholder={t('repsPlaceholder') + ' (> 0)'}
+                          placeholder={t('repsPlaceholder')}
                           placeholderTextColor={theme.text}
                           keyboardType="numeric"
                           value={item['reps_logged'].toString()}
                           onChangeText={(val) => updateExerciseWeightLog(item, val, 'reps_logged', index)}
+                        />
+                        <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>Difficulty</Text>
+                        <TouchableOpacity
+                          style={[styles.difficultyButton, { backgroundColor: theme.background, borderColor: theme.border }]}
+                          onPress={() => setDifficultyModalIndex(index)}
+                        >
+                          <Text style={styles.difficultyButtonText}>
+                            {item.difficulty === 'Easy' ? '😊 Easy' :
+                             item.difficulty === 'Hard' ? '😓 Hard' :
+                             '😐 Medium'}
+                          </Text>
+                        </TouchableOpacity>
+                        <Text style={[styles.inputLabel, {color: theme.text, marginTop: 15}]}>Comments</Text>
+                        <TextInput
+                          style={[styles.commentsInput, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}
+                          placeholder=""
+                          placeholderTextColor={theme.text}
+                          multiline
+                          numberOfLines={2}
+                          maxLength={500}
+                          value={item.comments || ''}
+                          onChangeText={(val) => updateExerciseWeightLog(item, val, 'comments', index)}
                         />
                       </View>
                     )
@@ -679,6 +730,12 @@ export default function WeightLogDetail() {
               </View>
           </TouchableWithoutFeedback>
       </Modal>
+
+      <DifficultySelector
+        visible={difficultyModalIndex !== null}
+        onSelect={handleDifficultySelect}
+        onClose={() => setDifficultyModalIndex(null)}
+      />
     </View>
   );
 }
@@ -789,6 +846,13 @@ const styles = StyleSheet.create({
   logDetail: {
     fontSize: 14,
   },
+  logComment: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginLeft: 15,
+    marginTop: 3,
+    opacity: 0.8,
+  },
   emptyText: {
     textAlign: 'center',
     fontSize: 16,
@@ -861,6 +925,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 10,
     marginBottom: 10,
+  },
+  difficultyButton: {
+    width: '100%',
+    height: 50,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  commentsInput: {
+    width: '100%',
+    height: 60,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    textAlignVertical: 'top',
   },
   modalTitle: {
     fontSize: 20,

@@ -16,6 +16,8 @@ import { useTheme } from '../context/ThemeContext';
 import { KeyboardAwareFlatList, KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useTranslation } from 'react-i18next';
 import { WeightLogStackParamList } from '../App';
+import DifficultySelector from '../components/DifficultySelector';
+import { DifficultyLevel } from '../utils/difficultyUtils';
 
 type LogWeightsRouteProp = RouteProp<WeightLogStackParamList, 'LogWeights'>;
 
@@ -32,7 +34,9 @@ export default function LogWeights() {
   const [exercises, setExercises] = useState<LoggedExercise[]>([]);
   const [weights, setWeights] = useState<{ [key: string]: string }>({});
   const [reps, setReps] = useState<{ [key: string]: string }>({});
+  const [difficulty, setDifficulty] = useState<{ [key: string]: 'Easy' | 'Medium' | 'Hard' }>({});
   const [exerciseSets, setExerciseSets] = useState<{ [key: string]: number[] }>({});
+  const [editingDifficultyKey, setEditingDifficultyKey] = useState<string | null>(null);
   const { weightFormat, dateFormat } = useSettings();
 
   const muscleGroupData = [
@@ -210,10 +214,10 @@ export default function LogWeights() {
         const weight = parseFloat(weights[weightKey]?.replace(',', '.') || '0');
         const repsCount = parseInt(reps[repsKey] || '0', 10);
 
-        if (weight <= 0 || repsCount <= 0) {
+        if (repsCount <= 0) {
           Alert.alert(
             t('errorTitle'),
-            t('logWeightsError')
+            t('invalidWeightReps')
           );
           return;
         }
@@ -230,10 +234,13 @@ export default function LogWeights() {
             const weight = parseFloat(weights[weightKey]?.replace(',', '.') || '0');
             const repsCount = parseInt(reps[repsKey] || '0', 10);
 
+            const difficultyKey = `${exercise.logged_exercise_id}_${setNumber}`;
+            const difficultyValue = difficulty[difficultyKey] || 'Medium'; // Default to Medium if not selected
+
             await db.runAsync(
-              `INSERT INTO Weight_Log 
-               (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group)
-               VALUES (?, ?, ?, ?, ?, ?, ?);`,
+              `INSERT INTO Weight_Log
+               (workout_log_id, logged_exercise_id, exercise_name, set_number, weight_logged, reps_logged, muscle_group, difficulty)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
               [
                 selectedWorkout.workout_log_id,
                 exercise.logged_exercise_id,
@@ -242,6 +249,7 @@ export default function LogWeights() {
                 weight,
                 repsCount,
                 exercise.muscle_group || null,
+                difficultyValue,
               ]
             );
           }
@@ -264,6 +272,21 @@ export default function LogWeights() {
     setReps(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleDifficultyChange = React.useCallback((key: string, value: 'Easy' | 'Medium' | 'Hard') => {
+    setDifficulty(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleDifficultyPress = React.useCallback((key: string) => {
+    setEditingDifficultyKey(key);
+  }, []);
+
+  const handleDifficultySelect = React.useCallback((selectedDifficulty: DifficultyLevel) => {
+    if (editingDifficultyKey && selectedDifficulty) {
+      setDifficulty(prev => ({ ...prev, [editingDifficultyKey]: selectedDifficulty }));
+    }
+    setEditingDifficultyKey(null);
+  }, [editingDifficultyKey]);
+
   const renderExercise = (exercise: LoggedExercise) => {
     const muscleGroupInfo = muscleGroupData.find(mg => mg.value === exercise.muscle_group);
     return (
@@ -279,21 +302,25 @@ export default function LogWeights() {
           )}
         </View>
         <View style={styles.labelsRow}>
-          <Text style={[styles.label, { color: theme.text }]}>{t('repsPlaceholder')}</Text>
           <Text style={[styles.label, { color: theme.text }]}>{t('Weight')} ({weightFormat})</Text>
+          <Text style={[styles.label, { color: theme.text }]}>{t('repsPlaceholder')}</Text>
+          <Text style={[styles.label, { color: theme.text }]}>Difficulty</Text>
         </View>
         {exerciseSets[exercise.logged_exercise_id]?.map((setNumber) => {
           const weightKey = `${exercise.logged_exercise_id}_${setNumber}`;
           const repsKey = `${exercise.logged_exercise_id}_${setNumber}`;
-    
+          const difficultyKey = `${exercise.logged_exercise_id}_${setNumber}`;
+
           return (
             <SetInputRow
               key={`${exercise.logged_exercise_id}_${setNumber}`}
               setNumber={setNumber}
               reps={reps[repsKey]}
               weight={weights[weightKey]}
+              difficulty={difficulty[difficultyKey]}
               onRepsChange={(text: string) => handleRepsChange(repsKey, text)}
               onWeightChange={(text: string) => handleWeightChange(weightKey, text)}
+              onDifficultyPress={() => handleDifficultyPress(difficultyKey)}
               onDelete={() => deleteSet(exercise.logged_exercise_id.toString(), setNumber)}
             />
           );
@@ -309,8 +336,8 @@ export default function LogWeights() {
   
 
   return (
-
-<KeyboardAwareScrollView
+    <>
+    <KeyboardAwareScrollView
       style={{ flex: 1, backgroundColor: theme.background }}
       contentContainerStyle={{ flexGrow: 1, padding: 20 }}
       enableOnAndroid={true}
@@ -365,6 +392,12 @@ export default function LogWeights() {
   )}
     </KeyboardAwareScrollView>
 
+    <DifficultySelector
+      visible={editingDifficultyKey !== null}
+      onSelect={handleDifficultySelect}
+      onClose={() => setEditingDifficultyKey(null)}
+    />
+    </>
   );
 }
 
@@ -372,39 +405,56 @@ type SetInputRowProps = {
   setNumber: number;
   reps: string;
   weight: string;
+  difficulty?: 'Easy' | 'Medium' | 'Hard';
   onRepsChange: (text: string) => void;
   onWeightChange: (text: string) => void;
+  onDifficultyPress: () => void;
   onDelete: () => void;
 };
 
-const SetInputRow = React.memo(({ setNumber, reps, weight, onRepsChange, onWeightChange, onDelete }: SetInputRowProps) => {
+const SetInputRow = React.memo(({ setNumber, reps, weight, difficulty, onRepsChange, onWeightChange, onDifficultyPress, onDelete }: SetInputRowProps) => {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { weightFormat } = useSettings();
+
+  const difficultyOptions = [
+    { value: 'Easy', label: 'Easy', emoji: '😊' },
+    { value: 'Medium', label: 'Medium', emoji: '😐' },
+    { value: 'Hard', label: 'Hard', emoji: '😓' },
+  ];
+
+  const currentDifficulty = difficultyOptions.find(opt => opt.value === difficulty) || difficultyOptions[1];
 
   return (
     <TouchableOpacity
       onLongPress={onDelete}
       style={[styles.setContainer, { backgroundColor: 'transparent' }]}
     >
-      <Text style={[styles.setText, { color: theme.text }]}>{t('Set')} {setNumber}:</Text>
+      <Text style={[styles.setText, { color: theme.text }]}>{setNumber}:</Text>
       <TextInput
         style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={t('repsPlaceholder') + " (> 0)"}
+        placeholder={weightFormat}
+        placeholderTextColor={theme.logborder}
+        keyboardType="numeric"
+        value={weight}
+        onChangeText={onWeightChange}
+      />
+
+      <TextInput
+        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
+        placeholder={t('repsPlaceholder')}
         placeholderTextColor={theme.logborder}
         keyboardType="numeric"
         value={reps}
         onChangeText={onRepsChange}
       />
 
-      <TextInput
-        style={[styles.input, { color: theme.text, backgroundColor: 'transparent' }]}
-        placeholder={weightFormat + " (> 0)"}
-        placeholderTextColor={theme.logborder}
-        keyboardType="decimal-pad"
-        value={weight}
-        onChangeText={onWeightChange}
-      />
+      <TouchableOpacity
+        style={[styles.difficultyButton, { backgroundColor: theme.card, borderColor: theme.border }]}
+        onPress={onDifficultyPress}
+      >
+        <Text style={styles.difficultyEmoji}>{currentDifficulty.emoji}</Text>
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 });
@@ -511,16 +561,28 @@ const styles = StyleSheet.create({
   setText: {
     fontSize: 18,
     textAlign: 'center',
-    flex: 1,
+    width: 40,
     fontWeight: '600',
   },
   input: {
     flex: 1,
     borderRadius: 5,
     padding: 8,
-    marginHorizontal: 25,
+    marginHorizontal: 10,
     textAlign: 'center',
     fontSize: 16,
+  },
+  difficultyButton: {
+    flex: 1.5,
+    height: 40,
+    marginHorizontal: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  difficultyEmoji: {
+    fontSize: 24,
   },
   saveButton: {
     backgroundColor: '#000000',
